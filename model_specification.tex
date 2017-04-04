@@ -1,0 +1,175 @@
+\documentclass[12pt,letterpaper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{amsthm}  
+\usepackage[top=1in, bottom=1in, left=1in, right=1in]{geometry}
+\usepackage{titlesec}
+\usepackage[backend=bibtex]{biblatex}
+\usepackage{hyperref}
+\usepackage[]{footmisc}
+\usepackage{mathrsfs}
+\usepackage{graphicx}
+\usepackage{verbatim}
+\usepackage{algpseudocode}
+\usepackage{textcomp}
+\usepackage{color}
+\titleformat{\section}{\normalsize\scshape\center}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\scshape\center}{\thesubsection}{1em}{}
+\makeatletter
+\renewcommand\@makefntext[1]{%
+    \parindent 1em%
+    \@thefnmark.~#1}
+\makeatother
+
+\makeatletter
+\def\moverlay{\mathpalette\mov@rlay}
+\def\mov@rlay#1#2{\leavevmode\vtop{%
+   \baselineskip\z@skip \lineskiplimit-\maxdimen
+   \ialign{\hfil$\m@th#1##$\hfil\cr#2\crcr}}}
+\newcommand{\charfusion}[3][\mathord]{
+    #1{\ifx#1\mathop\vphantom{#2}\fi
+        \mathpalette\mov@rlay{#2\cr#3}
+      }
+    \ifx#1\mathop\expandafter\displaylimits\fi}
+\makeatother
+
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}[definition]{Theorem}
+\newtheorem{lemma}[definition]{Lemma}
+\newtheorem{proposition}[definition]{Proposition}
+\newtheorem{corollary}[definition]{Corollary}
+\newtheorem{example}[definition]{Example}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+\theoremstyle{plain}
+
+\begin{document}
+\title{\uppercase{\textbf{\normalsize Something something something...}}}
+
+\author{\small{\textsc{Lukas Nabergall}}}
+\date{\small{\textsc{\today}}}
+\maketitle
+
+\allowdisplaybreaks
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Initial Idea Overview}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+The basic idea is to use a ``massively hierarchical" transfer learning approach to learn better (general) language models with faster training during adaptation to new domains. We use a deep neural network (of some type) as the model. Each layer (or adjacent group of layers) of the network corresponds to a different level in the language hierarchy: the first layer (or group of layers) is learned on a very large dataset containing a large number of samples from every available language type, of every available language, of every available linguistic style, etc.; the second layer is specific to a given language type (and trained on the corresponding restricted data set); the third layer is specific to a given language; the fourth layer is specific to a given linguistic style; etc. The learning task is (something like) to predict the next character (and/or word) in a sequence. 
+
+Three reasons to think transfering from such different languages and, in particular, from such different language types, will be (at least a little) beneficial: 
+
+\begin{itemize}
+\item At a high level, even seemingly vastly different language types, e.g. natural languages and programming languages, do have some common features---separation into ``words", similarly structured whitespace and punctuation, some intersections in vocabulary, etc. In particular, a programming language and a natural language are more similar than a programming/natural language and a randomly sampled sequence of characters.
+\item We can typically describe a given program using natural language. Although this often assumes a significant amount of background knowledge, it already points to large overlaps in the expressible meanings between the two language types, indicating the existence of some shared features. 
+\item It is likely (although currently unverified) that when a human reads and writes, say, natural language and programming language, they are using some common parts of the brain. Although the intersection between the parts of the brain used for each of the tasks may be small, this also strongly suggests the existence of common features between the two language types (in particular, that a neural network should likely be able to learn high-level representations useful to modeling/processing both language types). 
+\end{itemize}
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Problem}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Some Rough Ideas:
+
+\begin{enumerate}
+\item[1.] Recognizing/generating ``comprehensible" natural language
+\item[2.] Recognizing/generating/classifying any ``structured" language (generally, English, Chinese, HTML, C, LaTeX, Morse, etc.)
+\item[3.] Converting between linguistic styles (e.g. academic $\leftrightarrow$ Trump $\leftrightarrow$ Shakespeare $\leftrightarrow$ Twitter)
+\item[4.] Correcting informal/sloppy/incorrect natural language (or, generally, correcting any "structured" language) --- more specifically, domain-specific natural language correction (e.g. correcting text from/for Twitter, Wikipedia, a Trump speech, a Senate bill; more generally, HTML, C, LaTeX, Morse, Chinese, etc.)
+\end{enumerate}
+
+%%% I was thinking about using as largely and varied as possible a data set (10s-100s of billions of words or more) from many sources to train a "background" network, with the idea being replicating a person's ability to understand "arbitrary" text
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Related Work}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{itemize}
+\item Plank, What to do about non-standard (or non-canonical) language in NLP, (2016)
+\item Jozefowicz, Vinyals, Schuster, Shazeer, Wu, Exploring the Limits of Language Modeling, (2016)
+\item Zhang, Liu, Wang, Zhu, Neural Personalized Response Generation as Domain Adaptation, (2017) 
+\item Wang and Zheng, Domain Adaptation of Recurrent Neural Networks for Natural Language Understanding, (2015) 
+\item Wang and Zheng, Transfer Learning for Speech and Language Processing, (2015)
+\item Yoon, Yun, Kim, Park, Jung, Efficient Transfer Learning Schemes for Personalized Language Modeling using Recurrent Neural Network, (2017)
+\item Yosinski, Clune, Bengio, Lipson, How transferable are features in deep neural networks, (2014)
+\item Shazeer, Mirgoseini, Maziarz, Davis, Le, Hinton, Dean, Outrageously large neural networks: The Sparsely-Gated Mixture-of-Experts Layer, (2017)
+\item 
+\item 
+\item 
+\end{itemize}
+
+%%% Note: using wiktionary (or generally a dictionary/thesaurus) as supporting data
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Model}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%% Some notes:
+%%%
+%%% Incorporating character-level inputs will likely be a good/necessary idea for most problems under consideration
+%%%
+%%% Consider applying convolutional and generative adversarial networks, and reinforcement learning
+%%%
+%%% Perhaps use a very high dropout probability to increase training speed, even for e.g. extremely large data sets or very large networks
+
+\begin{enumerate}
+\item[] Model
+\begin{enumerate}
+\item[] 
+\item[] 
+\item[] 
+\item[] 
+\end{enumerate}
+\item[] Data
+\begin{enumerate}
+\item[] 
+\item[] 
+\item[] 
+\item[] 
+\end{enumerate}
+\item[] Training
+\begin{enumerate}
+\item[] 
+\item[] 
+\item[] 
+\item[] 
+\end{enumerate}
+\item[] Testing/Evaluation
+\begin{enumerate}
+\item[] 
+\item[] 
+\item[] 
+\item[] 
+\end{enumerate}
+\end{enumerate}
+
+
+
+
+
+
+\end{document} 
