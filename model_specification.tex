@@ -77,7 +77,7 @@ Three reasons to think transfering from such different languages and, in particu
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Problem}
+\section{Problem Ideas}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 Some Rough Ideas:
@@ -102,19 +102,22 @@ Some Rough Ideas:
 \section{Related Work}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\begin{itemize}
-\item Plank, What to do about non-standard (or non-canonical) language in NLP, (2016)
-\item Jozefowicz, Vinyals, Schuster, Shazeer, Wu, Exploring the Limits of Language Modeling, (2016)
-\item Zhang, Liu, Wang, Zhu, Neural Personalized Response Generation as Domain Adaptation, (2017) 
-\item Wang and Zheng, Domain Adaptation of Recurrent Neural Networks for Natural Language Understanding, (2015) 
-\item Wang and Zheng, Transfer Learning for Speech and Language Processing, (2015)
-\item Yoon, Yun, Kim, Park, Jung, Efficient Transfer Learning Schemes for Personalized Language Modeling using Recurrent Neural Network, (2017)
-\item Yosinski, Clune, Bengio, Lipson, How transferable are features in deep neural networks, (2014)
-\item Shazeer, Mirgoseini, Maziarz, Davis, Le, Hinton, Dean, Outrageously large neural networks: The Sparsely-Gated Mixture-of-Experts Layer, (2017)
-\item 
-\item 
-\item 
-\end{itemize}
+\begin{enumerate}
+\item Plank, What to do about non-standard (or non-canonical) language in NLP, (2016).
+\item Jozefowicz, Vinyals, Schuster, Shazeer, Wu, Exploring the Limits of Language Modeling, (2016).
+\item Zhang, Liu, Wang, Zhu, Neural Personalized Response Generation as Domain Adaptation, (2017).
+\item Wang and Zheng, Domain Adaptation of Recurrent Neural Networks for Natural Language Understanding, (2015).
+\item Wang and Zheng, Transfer Learning for Speech and Language Processing, (2015).
+\item Yoon, Yun, Kim, Park, Jung, Efficient Transfer Learning Schemes for Personalized Language Modeling using Recurrent Neural Network, (2017).
+\item Yosinski, Clune, Bengio, Lipson, How transferable are features in deep neural networks, (2014).
+\item Shazeer, Mirgoseini, Maziarz, Davis, Le, Hinton, Dean, Outrageously large neural networks: The Sparsely-Gated Mixture-of-Experts Layer, (2017).
+\item Dam, Tran, Pham, A deep language model for software code, (2016).
+\item Ruder, Ghaffari, Breslin, Character-level and Multi-channel Convolutional Neural Networks for Large-scale Authorship Attribution, (2016).
+\item Kim, Jernite, Sontag, Rush, Character-aware Neural Language Models, (2015).
+\item Krause, Lu, Murray, Renals, Multiplicative LSTM for sequence modelling, (2016).
+\item Wu et al., Google's Neural Machine Translation System - Bridging the Gap between Human and Machine Translation, (2016). \label{Wu2016}
+\item Jozefowicz, Zaremba, Sutskever, An Empirical Exploration of Recurrent Network Architectures, (2015). \label{Jozefowicz2015}
+\end{enumerate}
 
 %%% Note: using wiktionary (or generally a dictionary/thesaurus) as supporting data
 
@@ -137,33 +140,45 @@ Some Rough Ideas:
 %%% Perhaps use a very high dropout probability to increase training speed, even for e.g. extremely large data sets or very large networks
 
 \begin{enumerate}
-\item[] Model
+\item[] Task
 \begin{enumerate}
-\item[] 
-\item[] 
-\item[] 
-\item[] 
+\item[--] Develop a single character-level language model for many different ``specific" languages\footnote{Essentially defined as a subspace of a language (which itself is the space of ``all possible" texts in that language) with a given style and written by a single author.} with simultaneous training and the ability to quickly transfer learn other specific languages.
+\item[--] Formally, given a sequence of words $w_{1}, \ldots, w_{n}$ with character representations $w_{i} = (c_{i_{1}}, \ldots, c_{i_{k}})$ and a 4-tuple $(L_{1}, L_{2}, L_{3}, L_{4})$ (specifying, respectively, the language type, language, language style, and author of the word sequence), the language model estimates joint probabilities using the chain rule:
+$$p(w_{1}, \ldots, w_{n}) = p(w_{1})\prod_{i=2}^{n}p(w_{i} \mid w_{1}, \ldots, w_{i-1}).$$
+\end{enumerate}
+\item[] Base Model
+\begin{enumerate}
+\item[--] A ``branching" 5-layer long short-term memory network which, at each time step, processes an input character sequence $(c_{i_{1}}, \ldots, c_{i_{k}})$ for a word $w_{i}$ using a character-level convolutional neural network and outputs $p(w_{i} \mid w_{1}, \ldots, w_{i-1})$ using a softmax output layer. 
+\item[--] Each ``branch" at the $i$-th layer in the network takes as input the hidden state from the $(i-1)$-th layer. The $i$-th layer processes input text at the $i$-th level of language diversity: all text is processed by the single branch in the first layer, then text in each language type is processed by a distinct branch in the second layer, text in each language is processed by a distinct branch in the third layer, text in each language style is processed by a distinct branch in the fourth layer, and finally text written by each author is processed by a distinct branch in the fifth layer. 
+\end{enumerate}
+\item[] Possible Model Modifications/Improvements
+\begin{enumerate}
+\item[--] Connections between additional previous time steps to increase the network's ability to learn very long-term dependencies---instead of only passing in the cell state and hidden state from the previous time step to the current time step, we pass in the cell state and/or hidden state of a subset of all the previous timesteps (e.g. the previous $n$ time steps). 
+\item[--] Residual connections between layers to improve training of the deep LSTM---instead of passing in the hidden state to the next layer, the hidden state plus this layer's input is passed to the next layer (e.g. [\ref{Wu2016}]). 
+\item[--] Initialize the bias of the forget gate to $\geqslant 1$ to help prevent the vanishing gradient problem [\ref{Jozefowicz2015}].
+\item[--] 
+\item[--] 
 \end{enumerate}
 \item[] Data
 \begin{enumerate}
-\item[] 
-\item[] 
-\item[] 
-\item[] 
+\item[--] There are many different language spaces\footnote{That is, for a given alphabet.}, types of languages, languages, language styles, and authors---in particular, there are thousands (or more) in the last three categories. For tractability, we restrict to a small number of the most common from each category. On the other hand, to maximize the benefits of simultaneous ``transfer" learning, we will likely want to use at least 3 elements from each category at each language diversity level. The most important considerations when choosing language types, languages, etc. are diversity and ``popularity", both of which should be maximized. 
+\item[--] For the language space, we choose only one, and there are two possibilities: (1) Roman alphabet languages\footnote{We may restrict this to be languages that use the alphabet used by Western European and American languages, or consider more broadly all Roman alphabet languages (which would include many more letters and languages).}, (2) all languages expressible in unicode. For language type, we will work with the 3 most relevant and commonly used:\footnote{Probably.} natural language, programming language, and markup language. For languages, there are in general many possible choices per language type---perhaps: English, French, and German (natural language);\footnote{Other possibilities: Spanish, Portuguese, Danish, Swedish, Norwegian, etc.} C, Python, and Lisp (programming language);\footnote{Other possibilities: Java, C++, C\#, Fortran, JavaScript, Pascal, Perl, Ruby, Visual Basic, Go, etc.} HTML, \LaTeX, YAML/Markdown/ASN.1/RTF (markup language).
+\item[--] 
+\item[--] 
 \end{enumerate}
 \item[] Training
 \begin{enumerate}
-\item[] 
-\item[] 
-\item[] 
-\item[] 
+\item[--] 
+\item[--] 
+\item[--] 
+\item[--] 
 \end{enumerate}
 \item[] Testing/Evaluation
 \begin{enumerate}
-\item[] 
-\item[] 
-\item[] 
-\item[] 
+\item[--] 
+\item[--] 
+\item[--] 
+\item[--] 
 \end{enumerate}
 \end{enumerate}
 
