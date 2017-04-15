@@ -56,7 +56,26 @@
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Initial Idea Overview}
+\section{Idea Overview}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+The idea is to use state-of-the-art language models for a natural language (e.g. English) and a programming language (e.g. C++ or Python) to augment a sequence-to-sequence model with the goal of learning to generate source code from natural language descriptions of programming problems. 
+
+Formally, let $\mathcal{X}$ and $\mathcal{Y}$ be the space of natural language descriptions and source code modules on alphabets $\Sigma_{\mathcal{X}}$ and $\Sigma_{\mathcal{Y}}$, respectively. The goal is to find a function $f: \mathcal{X} \rightarrow \mathcal{Y}'$ that minimizes $C(f(X), Y)$ for all $X = (x_{1}, \ldots, x_{n}) \in \mathcal{X}$ and $Y = (y_{1}, \ldots, y_{m}) \in \mathcal{Y}$, where $C: \mathcal{Y}' \times \mathcal{Y} \rightarrow \mathbb{R}$ is some cost function and $\mathcal{Y}'$ is the space of ``artificial'' source code modules. 
+
+We use two deep ``branching" character-level long short-term memory networks $N_{1}$ and $N_{2}$ trained with hierarchical transfer learning to learn language models for natural languages and a programming languages. At each time step, $N_{1}$ processes an input character sequence $(c_{i_{1}}, \ldots, c_{i_{k}})$ for a word $w_{i}$ using a character-level convolutional neural network and outputs $p(w_{i} | w_{1}, \ldots, w_{i-1})$ using a softmax output layer. Each ``branch" at the $i$-th layer in the network takes as input the hidden state from a designated branch in the $(i-1)$-th layer. The $i$-th layer processes input text at the $i$-th level of language diversity: all text (e.g. natural languages of a given alphabet) is processed by the single branch in the first layer, then text in each language (e.g. English, French, Spanish, German, Swedish, Dutch, etc.) is processed by a distinct branch ins the second layer, text in each language style or domain\footnote{This may be further divided---should all academic writing be processed in a single layer, or should different disciplines by processed in different branches?} (e.g. journalism, third-person fiction, academia, blogs, Tweets, law, etc.) is processed by a distinct branch in the third layer, and finally text written by each author (Shakespeare, Trump, John Green, James Madison, etc.) is processed by a distinct branch in the fourth layer. Similarly, the network $N_{2}$ acts as a language model for programming languages.
+
+Word vectors for a given natural language and programming language are derived from the columns of a weight matrix found in the first layer of $N_{1}$ and $N_{2}$. 
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Language Modeling via Hierarchical Transfer Learning: Overview}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 The basic idea is to use a ``massively hierarchical" transfer learning approach to learn better (general) language models with faster training during adaptation to new domains. We use a deep neural network (of some type) as the model. Each layer (or adjacent group of layers) of the network corresponds to a different level in the language hierarchy: the first layer (or group of layers) is learned on a very large dataset containing a large number of samples from every available language type, of every available language, of every available linguistic style, etc.; the second layer is specific to a given language type (and trained on the corresponding restricted data set); the third layer is specific to a given language; the fourth layer is specific to a given linguistic style; etc. The learning task is (something like) to predict the next character (and/or word) in a sequence. 
@@ -117,9 +136,23 @@ Some Rough Ideas:
 \item Krause, Lu, Murray, Renals, Multiplicative LSTM for sequence modelling, (2016).
 \item Wu et al., Google's Neural Machine Translation System - Bridging the Gap between Human and Machine Translation, (2016). \label{Wu2016}
 \item Jozefowicz, Zaremba, Sutskever, An Empirical Exploration of Recurrent Network Architectures, (2015). \label{Jozefowicz2015}
+\item Olah and Carter, Attention and Augmented Recurrent Neural Networks, (2016)
 \end{enumerate}
 
 %%% Note: using wiktionary (or generally a dictionary/thesaurus) as supporting data
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Long short-term memory}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 
 
 
@@ -153,8 +186,8 @@ $$p(w_{1}, \ldots, w_{n}) = p(w_{1})\prod_{i=2}^{n}p(w_{i} \mid w_{1}, \ldots, w
 \end{enumerate}
 \item[] Possible Model Modifications/Improvements
 \begin{enumerate}
-\item[--] Connections between additional previous time steps to increase the network's ability to learn very long-term dependencies---instead of only passing in the cell state and hidden state from the previous time step to the current time step, we pass in the cell state and/or hidden state of a subset of all the previous timesteps (e.g. the previous $n$ time steps). 
-\item[--] Residual connections between layers to improve training of the deep LSTM---instead of passing in the hidden state to the next layer, the hidden state plus this layer's input is passed to the next layer (e.g. [\ref{Wu2016}]). 
+\item[--] Connections between additional previous time steps to increase the network's ability to learn very long-term dependencies---instead of only passing in the cell state and hidden state from the previous time step to the current time step, we pass in the cell state and/or hidden state of a subset of all the previous timesteps (e.g. the previous $n$ time steps). We can view this as a kind of attention mechanism. 
+\item[--] Residual connections between layers to improve training of the deep LSTM---instead of passing in the hidden state to the next layer, the hidden state plus this layer's input is passed to the next layer (e.g. [\ref{Wu2016}]). Related to the above, we may also implement residual connection across time (e.g. [\ref{}]).
 \item[--] Initialize the bias of the forget gate to $\geqslant 1$ to help prevent the vanishing gradient problem [\ref{Jozefowicz2015}].
 \item[--] 
 \item[--] 
