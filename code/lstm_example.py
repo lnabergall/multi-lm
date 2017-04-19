@@ -3,11 +3,13 @@ Example implementation of a vanilla LSTM network
 based on https://www.tensorflow.org/tutorials/recurrent.
 """
 
+import time
 import inspect
+
 import numpy as np
 import tensorflow as tf
 
-from data_processing import input_data
+import data_processing as dp
 
 
 TRAIN = "train"
@@ -15,8 +17,16 @@ VALID = "validate"
 TEST = "test"
 
 flags = tf.flags
+logging = tf.logging
+
+flags.DEFINE_string("model", "small", 
+    "A type of model. Possible options are: small, medium, large.")
+flags.DEFINE_string("data_path", None,
+                    "Where the training/test data is stored.")
+flags.DEFINE_string("save_path", None,
+                    "Model output directory.")
 flags.DEFINE_bool("use_fp16", False,
-                  "Train using 16-bit floats instead of 32bit floats")
+    "Train using 16-bit floats instead of 32bit floats")
 FLAGS = flags.FLAGS
 
 
@@ -31,7 +41,7 @@ class InputData:
         self.batch_size = config.batch_size
         self.num_steps = config.num_steps
         self.type = data_type
-        self.raw_data, self.input_data, self.targets = input_data(
+        self.raw_data, self.input_data, self.targets = dp.input_data(
             batch_size, num_steps, name=name)
         self.epoch_size = ((len(self.raw_data) // batch_size) - 1) // num_steps
 
@@ -141,4 +151,170 @@ class LSTMModel:
     @property
     def train_op(self):
         return self._train_op
+
+      
+class Config:
+    
+      def __init__(self, config_type):
+          if config_type == "small":
+              init_scale = 0.1
+              learning_rate = 1.0
+              max_grad_norm = 5
+              num_layers = 2
+              num_steps = 20
+              hidden_size = 200
+              max_epoch = 4
+              max_max_epoch = 13
+              keep_prob = 1.0
+              learning_rate_decay = 0.5
+              batch_size = 20
+              vocab_size = 10000
+          elif config_type == "medium":
+              init_scale = 0.05
+              learning_rate = 1.0
+              max_grad_norm = 5
+              num_layers = 2
+              num_steps = 35
+              hidden_size = 650
+              max_epoch = 6
+              max_max_epoch = 39
+              keep_prob = 0.5
+              learning_rate_decay = 0.8
+              batch_size = 20
+              vocab_size = 10000
+          elif config_type == "large":
+              init_scale = 0.04
+              learning_rate = 1.0
+              max_grad_norm = 10
+              num_layers = 2
+              num_steps = 35
+              hidden_size = 1500
+              max_epoch = 14
+              max_max_epoch = 44
+              keep_prob = 0.35
+              learning_rate_decay = 1 / 1.15
+              batch_size = 20
+              vocab_size = 10000
+          elif config_type == "test":
+              init_scale = 0.1
+              learning_rate = 1.0
+              max_grad_norm = 1
+              num_layers = 1
+              num_steps = 2
+              hidden_size = 2
+              max_epoch = 1
+              max_max_epoch = 1
+              keep_prob = 1.0
+              learning_rate_decay = 0.5
+              batch_size = 20
+              vocab_size = 10000
+          else:
+              raise ValueError("Invalid config type: '%s'", config_type)
+              
+
+def run_epoch(session, model, eval_op=None, verbose=False):
+    """Runs the model on the given data."""
+    start_time = time.time()
+    costs = 0.0
+    iterations = 0
+    state = session.run(model.initial_state)
+    fetches = {
+        "cost": model.cost,
+        "final_state": model.final_state,
+    }
+    if eval_op is not None:
+        fetches["eval_op"] = eval_op
+    
+    for step in range(model.input.epoch_size):
+        feed_dict = {}
+        for i, (c, h) in enumerate(model.initial_state):
+            feed_dict[c] = state[i].c
+            feed_dict[h] = state[i].h
+        
+        values = session.run(fetches, feed_dict)
+        cost = values["cost"]
+        state = values["final_state"]
+        
+        cost += cost
+        iterations += model.input.num_steps
+        
+        if verbose and step % (model.input.epoch_size // 10) == 10:
+            print("perplexity %.3f; speed %.3f; wps %.0f" % 
+                  (step * 1.0 / model.input.epoch_size, np.exp(costs / iterations),
+                   iterations * model.input.batch_size / (time.time() - start_time)))
+            
+    return np.exp(costs / iterations)
+
+
+def get_config():
+    return Config(FLAGS.model)
+
+
+def main():
+    if not FLAGS.data_path:
+        raise ValueError("Must set --data_path.")
+
+    raw_data = dp.raw_data(FLAGS.data_path)
+    train_data, validate_data, test_data, _ = raw_data
+
+    config = get_config()
+    eval_config = get_config()
+    eval_config.batch_size = 1
+    eval_config.num_steps = 1
+
+    with tf.Graph().as_default():
+        initializer = tf.random_uniform_initializer(-config.init_scale, 
+                                                    config.init_scale)
+
+        with tf.name_scope("Train"):
+            train_input = InputData(
+                config=config, data=train_data, name="TrainInput")
+            with tf.variable_scope("Model", reuse=None, initializer=initializer):
+                model = LSTMModel(
+                    training=True, config=config, input_=train_input)
+            tf.summary.scalar("Training Loss", model.cost)
+            tf.summary.scalar("Learning Rate", model.learning_rate)
+
+        with tf.name_scope("Validate"):
+            validate_input = InputData(
+                config=config, data=validate_data, name="ValidateInput")
+            with tf.variable_scope("Model", reuse=None, initializer=initializer):
+                model_valid = LSTMModel(
+                    training=False, config=config, input_=validate_input)
+            tf.summary.scalar("Validation Loss", model_valid.cost)
+
+        with tf.name_scope("Test"):
+            test_input = InputData(
+                config=eval_config, data=test_data, name="TestInput")
+            with tf.variable_scope("Model", reuse=None, initializer=initializer):
+                model_test = LSTMModel(
+                    training=False, config=eval_config, input_=test_input)
+
+        supervisor = tf.train.Supervisor(logdir=FLAGS.save_path)
+        with supervisor.managed_session() as session:
+            for i in range(config.max_max_epoch):
+                learning_rate_decay = (
+                    config.learning_rate_decay ** max(i + 1 - config.max_epoch, 0.0))
+                model.assign_learning_rate(
+                    session, config.learning_rate * learning_rate_decay)
+
+                print("Epoch: %d, Learning rate: %.3f" % (
+                    i+1, session.run(model.learning_rate)))
+                train_perplexity = run_epoch(session, model, 
+                    eval_op=model.train_op, verbose=True)
+                print("Epoch %d, Train Perplexity: %.3f" % (i+1, train_perplexity))
+                validate_perplexity = run_epoch(session, model_valid)
+                print("Epoch: %d, Validate Perplexity: %.3f" % (i+1, validate_perplexity))
+
+            test_perplexity = run_epoch(session, model_test)
+            print("Test Perplexity: %.3f" % test_perplexity)
+
+            if FLAGS.save_path:
+                print("Saving model to %s." % FLAGS.save_path)
+                supervisor.saver.save(session, FLAGS.save_path, 
+                                      global_step=supervisor.global_step)
+
+
+if __name__ == '__main__':
+    tf.app.run()
 
