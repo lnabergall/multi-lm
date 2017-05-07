@@ -1,5 +1,6 @@
 
 import os
+from chardet.universaldetector import UniversalDetector
 
 
 BASE_DIR = os.path.join(os.pardir, "data")
@@ -23,19 +24,21 @@ def get_data():
                 problem_id, {"description": "", "c++": [], "python": []})
         if path_parts[1] == "description":
             for file_name in file_names:
-                with open(os.path.join(path, file_name), "r") as desc_file:
+                with open(os.path.join(path, file_name), "r", encoding="utf8") as desc_file:
                     description = desc_file.read()
-                    data_by_problem[problem_id]["description"] = description 
+                    data_by_problem[problem_id]["description"] = description
         elif path_parts[1] == "solutions_c++":
             problem_id = os.path.split(path_parts[0])[1]
             for file_name in file_names:
-                with open(os.path.join(path, file_name), "r") as code_file:
+                with open(os.path.join(path, file_name), "r", 
+                          encoding="latin-1") as code_file:
                     code = code_file.read()
                     data_by_problem[problem_id]["c++"].append(code)
         elif path_parts[1] == "solutions_python":
             problem_id = os.path.split(path_parts[0])[1]
             for file_name in file_names:
-                with open(os.path.join(path, file_name), "r") as code_file:
+                with open(os.path.join(path, file_name), "r", 
+                          encoding="latin-1") as code_file:
                     code = code_file.read()
                     data_by_problem[problem_id]["python"].append(code)
     data = {}
@@ -51,8 +54,14 @@ def get_data():
 
 if __name__ == '__main__':
     data = get_data()
+    print(len(data))
+    cplusplus_count = 0
+    python_count = 0
+    for description in data:
+        cplusplus_count += len(data[description]["c++"])
+        python_count += len(data[description]["python"])
     for i, desc in enumerate(data):
-        if i <= 1:
+        if i == 1000:
             print("Description:")
             print(desc, "\n")
             print("C++ solutions:")
@@ -62,4 +71,6 @@ if __name__ == '__main__':
             for solution in data[desc]["python"]:
                 print(solution, "\n")
             print("\n")
+    print(cplusplus_count)
+    print(python_count)
 
