@@ -77,17 +77,27 @@ def correct_spelling(spell_correct_dict, textacy_doc):
     return text
 
 
-def process_data(data_dict, unknown_word_threshold=0):
-    spell_correct_dict = get_spell_corrector()
-    characters = set()
-    word = set()
-    processed_data_dict = {}
+def process_data(data_dict):
+    desc_characters = set()
+    python_characters = set()
+    cplusplus_characters = set()
     for description in data_dict:
-        desc_doc = textacy.doc.Doc(description)
         cplusplus_solutions = data_dict[description]["c++"]
         python_solutions = data_dict[description]["python"]
-        # ...use textacy.preprocess.preprocess_text to process description?
-        # https://www.overleaf.com/9073422yzvxgvbbcxgm#/32588645/
+        for char in description:
+            desc_characters.add(char)
+        for script in cplusplus_solutions:
+            for char in script:
+                cplusplus_characters.add(char)
+        for script in python_solutions:
+            for char in script:
+                python_characters.add(char)
+    return {
+        "descriptions_chars": desc_characters,
+        "python_characters": python_characters,
+        "c++_characters": cplusplus_characters,
+        "data": data_dict,
+    }
 
 
 if __name__ == '__main__':
