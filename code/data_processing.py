@@ -1,6 +1,7 @@
 
 import os
-from chardet.universaldetector import UniversalDetector
+
+import textacy
 
 
 BASE_DIR = os.path.join(os.pardir, "data")
@@ -51,6 +52,43 @@ def get_data():
         data[description] = code_dict
 
     return data
+
+
+def get_spell_corrector():
+    spell_correct_dict = {}
+    with open(os.path.join(BASE_DIR, 
+            "wikipedia_common_misspellings.txt"), "r") as spell_file:
+        for line in spell_file:
+            misspelled_word = line.split("->")[0]
+            correct_spelling = line.split("->")[1]
+            spell_correct_dict[misspelled_word] = correct_spelling
+    return spell_correct_dict
+
+
+def correct_spelling(spell_correct_dict, textacy_doc):
+    text = textacy_doc.text
+    for word in textacy_doc:
+        word = word.text
+        if word in spell_correct_dict:
+            corrected_word = spell_correct_dict[word]
+        else:
+            corrected_word = word
+        text.replace(word, corrected_word)
+    return text
+
+
+def process_data(data_dict, unknown_word_threshold=0):
+    spell_correct_dict = get_spell_corrector()
+    characters = set()
+    word = set()
+    processed_data_dict = {}
+    for description in data_dict:
+        desc_doc = textacy.doc.Doc(description)
+        cplusplus_solutions = data_dict[description]["c++"]
+        python_solutions = data_dict[description]["python"]
+        # ...use textacy.preprocess.preprocess_text to process description?
+        # https://www.overleaf.com/9073422yzvxgvbbcxgm#/32588645/
+
 
 if __name__ == '__main__':
     data = get_data()
