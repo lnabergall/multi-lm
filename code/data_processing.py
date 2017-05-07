@@ -92,12 +92,19 @@ def process_data(data_dict):
         for script in python_solutions:
             for char in script:
                 python_characters.add(char)
+    desc_characters.discard("")
+    python_characters.discard("")
+    cplusplus_characters.discard("")
     return {
         "descriptions_chars": desc_characters,
         "python_characters": python_characters,
         "c++_characters": cplusplus_characters,
         "data": data_dict,
     }
+
+
+def vectorize_data(processed_data_dict):
+    pass
 
 
 if __name__ == '__main__':
