@@ -1,5 +1,5 @@
 """
-Example implementation of a vanilla LSTM network 
+Example implementation of a vanilla LSTM network in (lower-level) Tensorflow
 based on https://www.tensorflow.org/tutorials/recurrent.
 """
 

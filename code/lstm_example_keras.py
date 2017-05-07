@@ -3,19 +3,17 @@ Example implementation of a vanilla LSTM network in Keras.
 """
 
 import numpy as np
-import random
-import sys
 
 from keras.models import Sequential
 from keras.layers import Dense, Activation, LSTM
 from keras.optimizers import (RMSprop, SGD, Adagrad, 
                               Adadelta, Adam, Adamax, Nadam)
-from keras.utils.data_utils import get_file
 
 import data_processing as dp
 
 
 HIDDEN_DIM = 128
+LEARNING_RATE = 0.01
 
 
 def build_model(train_data):
@@ -24,7 +22,7 @@ def build_model(train_data):
     model.add(LSTM(HIDDEN_DIM, input_shape=(train_data.shape[1],)))
     model.add(Dense(train_data.shape[1]))
     model.add(Activation("softmax"))
-    optimizer = RMSprop(lr=0.01)
+    optimizer = RMSprop(lr=LEARNING_RATE)
     model.compile(loss="categorical_crossentropy", optimizer=optimizer)
 
 
@@ -43,10 +41,10 @@ def train(model, training_data, training_data_labels,
         print("Iteration", iteration, "...")
         model.fit(training_data, training_data_labels, batch_size=128, epochs=1)
         training_loss = model.evaluate(
-            training_data, training_data_labels, batch_size=128)
+            training_data, training_data_labels, batch_size=1)
         print("Training loss:", training_loss)
     print("Training stopped.\n")
     validation_loss = model.evaluate(
-        validation_data, validation_data_labels, batch_size=128)
+        validation_data, validation_data_labels, batch_size=1)
     print("Validation loss:", validation_loss)
 
