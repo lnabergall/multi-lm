@@ -16,11 +16,11 @@ HIDDEN_DIM = 128
 LEARNING_RATE = 0.01
 
 
-def build_model(train_data):
+def build_model(training_data, training_data_labels):
     print("Building model...")
     model = Sequential()
-    model.add(LSTM(HIDDEN_DIM, input_shape=(train_data.shape[1],)))
-    model.add(Dense(train_data.shape[1]))
+    model.add(LSTM(HIDDEN_DIM, input_shape=(training_data.shape[-1],)))
+    model.add(Dense(training_data_labels.shape[-1]))
     model.add(Activation("softmax"))
     optimizer = RMSprop(lr=LEARNING_RATE)
     model.compile(loss="categorical_crossentropy", optimizer=optimizer)
@@ -47,4 +47,17 @@ def train(model, training_data, training_data_labels,
     validation_loss = model.evaluate(
         validation_data, validation_data_labels, batch_size=1)
     print("Validation loss:", validation_loss)
+
+
+def main():
+    data = dp.get_data()
+    processed_data = dp.process_data(data)
+    vectorized_data = dp.vectorize_data(processed_data)
+    model = build_model(vectorized_data[0], vectorized_data[1])
+    train(model, vectorized_data[0], vectorized_data[1], 
+          vectorized_data[2], vectorized_data[3])
+
+
+if __name__ == '__main__':
+    main()
 
