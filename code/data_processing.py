@@ -1,6 +1,8 @@
 
 import os
+from random import shuffle
 
+import numpy as np
 import textacy
 
 
@@ -78,33 +80,117 @@ def correct_spelling(spell_correct_dict, textacy_doc):
 
 
 def process_data(data_dict):
+    """Collect characters and add special beginning and end symbols."""
     desc_characters = set()
-    python_characters = set()
-    cplusplus_characters = set()
+    python_characters = set("<boc><eoc>")
+    cplusplus_characters = set("<boc><eoc>")
     for description in data_dict:
         cplusplus_solutions = data_dict[description]["c++"]
         python_solutions = data_dict[description]["python"]
-        for char in description:
-            desc_characters.add(char)
+        desc_characters |= set(description)
+        cplusplus_solutions_new = []
         for script in cplusplus_solutions:
-            for char in script:
-                cplusplus_characters.add(char)
+            cplusplus_characters |= set(script)
+            script = "<boc>" + script + "<eoc>"
+            cplusplus_solutions_new.append(script)
+        data_dict[description]["c++"] = cplusplus_solutions_new
+        python_solutions_new = []
         for script in python_solutions:
-            for char in script:
-                python_characters.add(char)
+            python_characters |= set(script)
+            script = "<boc>" + script + "<eoc>"
+            python_solutions_new.append(script)
+        data_dict[description]["python"] = python_solutions_new
     desc_characters.discard("")
     python_characters.discard("")
     cplusplus_characters.discard("")
+    desc_characters = sorted(list(desc_characters))
+    python_characters = sorted(list(python_characters))
+    cplusplus_characters = sorted(list(cplusplus_characters))
     return {
-        "descriptions_chars": desc_characters,
-        "python_characters": python_characters,
-        "c++_characters": cplusplus_characters,
+        "description_chars": desc_characters,
+        "python_chars": python_characters,
+        "c++_chars": cplusplus_characters,
         "data": data_dict,
     }
 
 
 def vectorize_data(processed_data_dict):
-    pass
+    # Vectorize
+    desc_chars = processed_data_dict["description_chars"]
+    print(len(desc_chars))
+    desc_char_indices = {char: i for i, char in enumerate(desc_chars)}
+    python_chars = processed_data_dict["python_chars"]
+    print(len(python_chars))
+    python_char_indices = {char: i for i, char in enumerate(python_chars)}
+    max_desc_length = max(
+        len(description) for description in processed_data_dict["data"])
+    print(max_desc_length)
+    max_python_length = max(
+        max((len(script) for script 
+             in processed_data_dict["data"][desc]["python"]), default=0) 
+        for desc in processed_data_dict["data"])
+    print(max_python_length)
+    solution_count = sum(
+        len(processed_data_dict["data"][desc]["python"]) 
+        for desc in processed_data_dict["data"])
+    description_array = np.zeros(
+        (solution_count, max_desc_length, len(desc_chars)), dtype=np.bool)
+    python_solution_array = np.zeros(
+        (solution_count, max_python_length, len(python_chars)), dtype=np.bool)
+    solution_index = 0
+    for i, description in enumerate(processed_data_dict["data"]):
+        python_solutions = processed_data_dict["data"][description]["python"]
+        for j, script in enumerate(python_solutions):
+            for k, char in enumerate(description):
+                description_array[solution_index, k, desc_char_indices[char]] = 1
+            for k, char in enumerate(script):
+                python_solution_array[solution_index, k, python_char_indices[char]] = 1
+            solution_index += 1
+
+    # Split into training, validation, and test sets
+    training_size = ((solution_count * 8) // 10) + 1
+    validation_size = solution_count // 10
+    test_size = solution_count // 10
+    description_array_train = np.zeros(
+        (training_size, max_desc_length, len(desc_chars)), dtype=np.bool)
+    solution_array_train = np.zeros(
+        (training_size, max_python_length, len(python_chars)), dtype=np.bool)
+    description_array_valid = np.zeros(
+        (validation_size, max_desc_length, len(desc_chars)), dtype=np.bool)
+    solution_array_valid = np.zeros(
+        (validation_size, max_python_length, len(python_chars)), dtype=np.bool)
+    description_array_test = np.zeros(
+        (test_size, max_desc_length, len(desc_chars)), dtype=np.bool)
+    solution_array_test = np.zeros(
+        (test_size, max_python_length, len(python_chars)), dtype=np.bool)
+    random_range = list(range(solution_count))
+    shuffle(random_range)
+    for i in range(description_array.shape[0]):
+        for j in range(description_array.shape[1]):
+            for k in range(description_array.shape[2]):
+                if i <= training_size - 1:
+                    i = random_range[i]
+                    description_array_train[i, j, k] = description_array[i, j, k]
+                elif training_size <= i <= training_size + validation_size - 1:
+                    i = random_range[i]
+                    description_array_valid[i, j, k] = description_array[i, j, k]
+                else:
+                    i = random_range[i]
+                    description_array_test[i, j, k] = description_array[i, j, k]
+        for j in range(python_solution_array.shape[1]):
+            for k in range(python_solution_array.shape[2]):
+                if i <= training_size - 1:
+                    i = random_range[i]
+                    solution_array_train[i, j, k] = python_solution_array[i, j, k]
+                elif training_size <= i <= training_size + validation_size - 1:
+                    i = random_range[i]
+                    solution_array_valid[i, j, k] = python_solution_array[i, j, k]
+                else:
+                    i = random_range[i]
+                    solution_array_test[i, j, k] = python_solution_array[i, j, k]
+
+    return (description_array_train, solution_array_train, description_array_valid,
+            solution_array_valid, description_array_test, solution_array_test)
 
 
 if __name__ == '__main__':
