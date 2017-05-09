@@ -19,7 +19,11 @@ LEARNING_RATE = 0.01
 def build_model(training_data, training_data_labels):
     print("Building model...")
     model = Sequential()
-    model.add(LSTM(HIDDEN_DIM, input_shape=(training_data.shape[-1],)))
+    model.add(LSTM(HIDDEN_DIM, input_shape=(
+        training_data.shape[-2], training_data.shape[-1]), return_sequences=False))
+    model.add(RepeatVector(training_data_labels.shape[-2]))
+    model.add(LSTM(HIDDEN_DIM, input_shape=(
+        training_data_labels.shape[-2], HIDDEN_DIM), return_sequences=True))
     model.add(Dense(training_data_labels.shape[-1]))
     model.add(Activation("softmax"))
     optimizer = RMSprop(lr=LEARNING_RATE)
@@ -50,8 +54,11 @@ def train(model, training_data, training_data_labels,
 
 
 def main():
+    print("Fetching data...")
     data = dp.get_data()
+    print("Processing data...")
     processed_data = dp.process_data(data)
+    print("Vectorizing data...")
     vectorized_data = dp.vectorize_data(processed_data)
     model = build_model(vectorized_data[0], vectorized_data[1])
     train(model, vectorized_data[0], vectorized_data[1], 
