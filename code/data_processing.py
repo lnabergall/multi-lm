@@ -135,38 +135,45 @@ def process_data(data_dict):
     }
 
 
-def vectorize_data(processed_data_dict):
-    # Vectorize
+def vectorize_data(processed_data_dict, backprop_timesteps):
+    # Collect metadata
     desc_chars = processed_data_dict["description_chars"]
-    print(len(desc_chars))
     desc_char_indices = {char: i for i, char in enumerate(desc_chars)}
     python_chars = processed_data_dict["python_chars"]
-    print(len(python_chars))
     python_char_indices = {char: i for i, char in enumerate(python_chars)}
-    max_desc_length = max(
+    min_desc_length = min(
         len(description) for description in processed_data_dict["data"])
-    print(max_desc_length)
-    max_python_length = max(
-        max((len(script) for script 
+    min_python_length = min(
+        min((len(script) for script 
              in processed_data_dict["data"][desc]["python"]), default=0) 
         for desc in processed_data_dict["data"])
-    print(max_python_length)
-    solution_count = sum(
-        len(processed_data_dict["data"][desc]["python"]) 
-        for desc in processed_data_dict["data"])
-    description_array = np.zeros(
-        (solution_count, max_desc_length, len(desc_chars)), dtype=np.bool)
-    python_solution_array = np.zeros(
-        (solution_count, max_python_length, len(python_chars)), dtype=np.bool)
-    solution_index = 0
+    if (min_desc_length < backprop_timesteps 
+            or min_python_length < backprop_timesteps):
+        raise ValueError("Need to backprop for fewer timesteps! "
+                         "Or change implementation...")
+
+    # Cut the data into sequences of backprop_timesteps characters
+    desc_sequences = []
+    python_sequences = []
     for description in processed_data_dict["data"]:
+        desc_sequences.extend([description[i: i+backprop_timesteps] 
+            for i in range(len(description) - backprop_timesteps)])
         python_solutions = processed_data_dict["data"][description]["python"]
         for script in python_solutions:
-            for k, char in enumerate(description):
-                description_array[solution_index, k, desc_char_indices[char]] = 1
-            for k, char in enumerate(script):
-                python_solution_array[solution_index, k, python_char_indices[char]] = 1
-            solution_index += 1
+            python_sequences.extend([script[i: i+backprop_timesteps] 
+                for i in range(len(script) - backprop_timesteps)])
+
+    # Vectorize
+    description_array = np.zeros(
+        (len(desc_sequences), backprop_timesteps, len(desc_chars)), dtype=np.bool)
+    python_solution_array = np.zeros(
+        (len(python_sequences), backprop_timesteps, len(python_chars)), dtype=np.bool)
+    for i, sequence in enumerate(desc_sequences):
+        for j, char in enumerate(sequence):
+            description_array[i, j, desc_char_indices[char]] = 1
+    for i, sequence in enumerate(python_sequences):
+        for j, char in enumerate(sequence):
+            python_solution_array[i, j, python_char_indices[char]] = 1 
 
     # Split into training, validation, and test sets
     training_size = ((solution_count * 8) // 10) + 1
@@ -187,6 +194,7 @@ def vectorize_data(processed_data_dict):
     random_range = list(range(solution_count))
     shuffle(random_range)
     for i in range(description_array.shape[0]):
+        print(i, "out of", description_array.shape[0])
         for j in range(description_array.shape[1]):
             for k in range(description_array.shape[2]):
                 if i <= training_size - 1:
