@@ -80,23 +80,41 @@ def correct_spelling(spell_correct_dict, textacy_doc):
 
 
 def process_data(data_dict):
-    """Collect characters and add special beginning and end symbols."""
+    """
+    Collect character information and add special beginning 
+    and end symbols.
+    """
     desc_characters = set()
+    desc_char_counts = {}
     python_characters = set("<boc><eoc>")
+    python_char_counts = {}
     cplusplus_characters = set("<boc><eoc>")
+    cplusplus_char_counts = {}
     for description in data_dict:
         cplusplus_solutions = data_dict[description]["c++"]
         python_solutions = data_dict[description]["python"]
         desc_characters |= set(description)
+        for char in description:
+            if char not in desc_char_counts:
+                desc_char_counts[char] = 0
+            desc_char_counts[char] += 1
         cplusplus_solutions_new = []
         for script in cplusplus_solutions:
             cplusplus_characters |= set(script)
+            for char in script:
+                if char not in cplusplus_char_counts:
+                    cplusplus_char_counts[char] = 0
+                cplusplus_char_counts[char] += script.count(char)
             script = "<boc>" + script + "<eoc>"
             cplusplus_solutions_new.append(script)
         data_dict[description]["c++"] = cplusplus_solutions_new
         python_solutions_new = []
         for script in python_solutions:
             python_characters |= set(script)
+            for char in script:
+                if char not in python_char_counts:
+                    python_char_counts[char] = 0
+                python_char_counts[char] += script.count(char)
             script = "<boc>" + script + "<eoc>"
             python_solutions_new.append(script)
         data_dict[description]["python"] = python_solutions_new
@@ -108,8 +126,11 @@ def process_data(data_dict):
     cplusplus_characters = sorted(list(cplusplus_characters))
     return {
         "description_chars": desc_characters,
+        "description_char_counts": desc_char_counts,
         "python_chars": python_characters,
+        "python_char_counts": python_char_counts,
         "c++_chars": cplusplus_characters,
+        "c++_char_counts": cplusplus_char_counts,
         "data": data_dict,
     }
 
