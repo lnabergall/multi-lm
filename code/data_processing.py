@@ -17,7 +17,7 @@ def get_data():
     as keys and corresponding code solutions as values.
     """
     data_path = os.path.join(BASE_DIR, "description2code_current", 
-                             "description2code_current", "codechef")
+                             "description2code_current", "codechef", "easy")
     data_by_problem = {}
     for path, dir_names, file_names in os.walk(data_path):
         path_parts = os.path.split(path)
@@ -159,9 +159,9 @@ def vectorize_data(processed_data_dict):
     python_solution_array = np.zeros(
         (solution_count, max_python_length, len(python_chars)), dtype=np.bool)
     solution_index = 0
-    for i, description in enumerate(processed_data_dict["data"]):
+    for description in processed_data_dict["data"]:
         python_solutions = processed_data_dict["data"][description]["python"]
-        for j, script in enumerate(python_solutions):
+        for script in python_solutions:
             for k, char in enumerate(description):
                 description_array[solution_index, k, desc_char_indices[char]] = 1
             for k, char in enumerate(script):
@@ -190,25 +190,31 @@ def vectorize_data(processed_data_dict):
         for j in range(description_array.shape[1]):
             for k in range(description_array.shape[2]):
                 if i <= training_size - 1:
+                    index = i
                     i = random_range[i]
-                    description_array_train[i, j, k] = description_array[i, j, k]
+                    description_array_train[index, j, k] = description_array[i, j, k]
                 elif training_size <= i <= training_size + validation_size - 1:
+                    index = i - training_size
                     i = random_range[i]
-                    description_array_valid[i, j, k] = description_array[i, j, k]
+                    description_array_valid[index, j, k] = description_array[i, j, k]
                 else:
+                    index = i - training_size - validation_size
                     i = random_range[i]
-                    description_array_test[i, j, k] = description_array[i, j, k]
+                    description_array_test[index, j, k] = description_array[i, j, k]
         for j in range(python_solution_array.shape[1]):
             for k in range(python_solution_array.shape[2]):
                 if i <= training_size - 1:
+                    index = i
                     i = random_range[i]
-                    solution_array_train[i, j, k] = python_solution_array[i, j, k]
+                    solution_array_train[index, j, k] = python_solution_array[i, j, k]
                 elif training_size <= i <= training_size + validation_size - 1:
+                    index = i - training_size
                     i = random_range[i]
-                    solution_array_valid[i, j, k] = python_solution_array[i, j, k]
+                    solution_array_valid[index, j, k] = python_solution_array[i, j, k]
                 else:
+                    index = i - training_size - validation_size
                     i = random_range[i]
-                    solution_array_test[i, j, k] = python_solution_array[i, j, k]
+                    solution_array_test[index, j, k] = python_solution_array[i, j, k]
 
     return (description_array_train, solution_array_train, description_array_valid,
             solution_array_valid, description_array_test, solution_array_test)
