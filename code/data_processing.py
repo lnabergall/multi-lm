@@ -1,6 +1,8 @@
 
 import os
 from random import shuffle
+from statistics import mean, median
+from itertools import product
 
 import numpy as np
 import textacy
@@ -9,6 +11,9 @@ import textacy
 BASE_DIR = os.path.join(os.pardir, "data")
 if not os.path.exists(BASE_DIR):
     raise NotImplementedError("Can't work from current directory!")
+
+
+PAD_CHARACTER = "§"
 
 
 def get_data():
@@ -79,20 +84,22 @@ def correct_spelling(spell_correct_dict, textacy_doc):
     return text
 
 
-def process_data(data_dict):
+def process_data(data_dict, backprop_timesteps):
     """
     Collect character information and add special beginning 
     and end symbols.
     """
     desc_characters = set()
     desc_char_counts = {}
-    python_characters = set("<boc><eoc>")
+    python_characters = set("<boc><eoc>§")
     python_char_counts = {}
-    cplusplus_characters = set("<boc><eoc>")
+    cplusplus_characters = set("<boc><eoc>§")
     cplusplus_char_counts = {}
     for description in data_dict:
         cplusplus_solutions = data_dict[description]["c++"]
         python_solutions = data_dict[description]["python"]
+        description_orig = description
+        description = description.strip()
         desc_characters |= set(description)
         for char in description:
             if char not in desc_char_counts:
@@ -100,6 +107,9 @@ def process_data(data_dict):
             desc_char_counts[char] += 1
         cplusplus_solutions_new = []
         for script in cplusplus_solutions:
+            script = script.strip()
+            if len(script) < backprop_timesteps-len("<boc><eoc>"):
+                continue    # Remove very short scripts
             cplusplus_characters |= set(script)
             for char in script:
                 if char not in cplusplus_char_counts:
@@ -107,9 +117,12 @@ def process_data(data_dict):
                 cplusplus_char_counts[char] += script.count(char)
             script = "<boc>" + script + "<eoc>"
             cplusplus_solutions_new.append(script)
-        data_dict[description]["c++"] = cplusplus_solutions_new
+        data_dict[description_orig]["c++"] = cplusplus_solutions_new
         python_solutions_new = []
         for script in python_solutions:
+            script = script.strip()
+            if len(script) < backprop_timesteps-len("<boc><eoc>"):
+                continue    # Remove very short scripts
             python_characters |= set(script)
             for char in script:
                 if char not in python_char_counts:
@@ -117,14 +130,14 @@ def process_data(data_dict):
                 python_char_counts[char] += script.count(char)
             script = "<boc>" + script + "<eoc>"
             python_solutions_new.append(script)
-        data_dict[description]["python"] = python_solutions_new
+        data_dict[description_orig]["python"] = python_solutions_new
     desc_characters.discard("")
     python_characters.discard("")
     cplusplus_characters.discard("")
     desc_characters = sorted(list(desc_characters))
     python_characters = sorted(list(python_characters))
     cplusplus_characters = sorted(list(cplusplus_characters))
-    return {
+    processed_data_dict = {
         "description_chars": desc_characters,
         "description_char_counts": desc_char_counts,
         "python_chars": python_characters,
@@ -133,6 +146,28 @@ def process_data(data_dict):
         "c++_char_counts": cplusplus_char_counts,
         "data": data_dict,
     }
+    description_lengths = [len(description) 
+                           for description in processed_data_dict["data"]]
+    min_desc_length = min(description_lengths)
+    max_desc_length = max(description_lengths)
+    avg_desc_length = mean(description_lengths)
+    median_desc_length = median(description_lengths)
+    python_lengths = [[len(script) for script 
+                       in processed_data_dict["data"][desc]["python"]]
+                      for desc in processed_data_dict["data"]]
+    min_python_length = min(
+        min(lengths, default=1000) for lengths in python_lengths)
+    max_python_length = max(
+        max(lengths, default=0) for lengths in python_lengths)
+    avg_python_length = mean(
+        mean(lengths) for lengths in python_lengths if lengths)
+    median_python_length = median(
+        length for lengths in python_lengths for length in lengths)
+    print(min_desc_length, max_desc_length, 
+          avg_desc_length, median_desc_length)
+    print(min_python_length, max_python_length, 
+          avg_python_length, median_python_length)
+    return processed_data_dict
 
 
 def vectorize_data(processed_data_dict, backprop_timesteps):
@@ -141,12 +176,13 @@ def vectorize_data(processed_data_dict, backprop_timesteps):
     desc_char_indices = {char: i for i, char in enumerate(desc_chars)}
     python_chars = processed_data_dict["python_chars"]
     python_char_indices = {char: i for i, char in enumerate(python_chars)}
-    min_desc_length = min(
-        len(description) for description in processed_data_dict["data"])
-    min_python_length = min(
-        min((len(script) for script 
-             in processed_data_dict["data"][desc]["python"]), default=0) 
-        for desc in processed_data_dict["data"])
+    description_lengths = [len(description) 
+                           for description in processed_data_dict["data"]]
+    min_desc_length = min(description_lengths)
+    python_lengths = [[len(script) for script 
+                       in processed_data_dict["data"][desc]["python"]]
+                      for desc in processed_data_dict["data"]]
+    min_python_length = min(min(lengths, default=1000) for lengths in python_lengths)
     if (min_desc_length < backprop_timesteps 
             or min_python_length < backprop_timesteps):
         raise ValueError("Need to backprop for fewer timesteps! "
@@ -156,29 +192,56 @@ def vectorize_data(processed_data_dict, backprop_timesteps):
     desc_sequences = []
     python_sequences = []
     for description in processed_data_dict["data"]:
-        desc_sequences.extend([description[i: i+backprop_timesteps] 
-            for i in range(len(description) - backprop_timesteps)])
+        desc_sequences.append([description[i: i+backprop_timesteps] 
+            for i in range(0, len(description)-backprop_timesteps, backprop_timesteps//2)])
+        leftover_index = (len(description)-backprop_timesteps) % (backprop_timesteps//2)
+        last_desc_sequence = description[len(description)-1-leftover_index:]
+        for i in range(backprop_timesteps - len(description) + leftover_index):
+            last_desc_sequence += "§"
+        desc_sequences[-1].append(last_desc_sequence)
+        python_sequences.append([])
         python_solutions = processed_data_dict["data"][description]["python"]
         for script in python_solutions:
-            python_sequences.extend([script[i: i+backprop_timesteps] 
-                for i in range(len(script) - backprop_timesteps)])
+            python_sequences[-1].append([script[i: i+backprop_timesteps] 
+                for i in range(0, len(script)-backprop_timesteps, backprop_timesteps//2)])
+            leftover_index = (len(script)-backprop_timesteps) % (backprop_timesteps//2)
+            last_script_sequence = script[len(script)-1-leftover_index:]
+            for i in range(backprop_timesteps - len(script) + leftover_index):
+                last_script_sequence += "§"
+            if len(last_script_sequence) > 50:
+                print(last_script_sequence)
+                print(len(last_script_sequence))
+                raise NotImplementedError
+            python_sequences[-1][-1].append(last_script_sequence)
 
     # Vectorize
+    training_example_count = 0
+    for desc_list, desc_script_list in zip(desc_sequences, python_sequences):
+        for sequences in desc_script_list:
+            training_example_count += len(desc_list) * len(sequences)
+    print(training_example_count)
     description_array = np.zeros(
-        (len(desc_sequences), backprop_timesteps, len(desc_chars)), dtype=np.bool)
+        (training_example_count, backprop_timesteps, len(desc_chars)), dtype=np.bool)
     python_solution_array = np.zeros(
-        (len(python_sequences), backprop_timesteps, len(python_chars)), dtype=np.bool)
-    for i, sequence in enumerate(desc_sequences):
-        for j, char in enumerate(sequence):
-            description_array[i, j, desc_char_indices[char]] = 1
-    for i, sequence in enumerate(python_sequences):
-        for j, char in enumerate(sequence):
-            python_solution_array[i, j, python_char_indices[char]] = 1 
+        (training_example_count, backprop_timesteps, len(python_chars)), dtype=np.bool)
+    print(description_array.size)
+    print(python_solution_array.size)
+    outer_index = 0
+    for i, (desc_seqs, desc_script_list) in enumerate(
+            zip(desc_sequences, python_sequences)):
+        for j, script_seqs in enumerate(desc_script_list):
+            for k, (desc_seq, script_seq) in enumerate(product(desc_seqs, script_seqs)):
+                for m, char in enumerate(desc_seq):
+                    description_array[outer_index, m, desc_char_indices[char]] = 1
+                for m, char in enumerate(script_seq):
+                    python_solution_array[outer_index, m, python_char_indices[char]] = 1
+                outer_index += 1
 
+    print("Splitting into training, validation, and test sets...")
     # Split into training, validation, and test sets
-    training_size = ((solution_count * 8) // 10) + 1
-    validation_size = solution_count // 10
-    test_size = solution_count // 10
+    training_size = ((training_example_count * 8) // 10) + 1
+    validation_size = training_example_count // 10
+    test_size = training_example_count // 10
     description_array_train = np.zeros(
         (training_size, max_desc_length, len(desc_chars)), dtype=np.bool)
     solution_array_train = np.zeros(
@@ -191,7 +254,7 @@ def vectorize_data(processed_data_dict, backprop_timesteps):
         (test_size, max_desc_length, len(desc_chars)), dtype=np.bool)
     solution_array_test = np.zeros(
         (test_size, max_python_length, len(python_chars)), dtype=np.bool)
-    random_range = list(range(solution_count))
+    random_range = list(range(training_example_count))
     shuffle(random_range)
     for i in range(description_array.shape[0]):
         print(i, "out of", description_array.shape[0])
