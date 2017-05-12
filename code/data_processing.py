@@ -146,6 +146,8 @@ def process_data(data_dict, backprop_timesteps):
         "c++_char_counts": cplusplus_char_counts,
         "data": data_dict,
     }
+
+    # Calculate some dataset statistics
     description_lengths = [len(description) 
                            for description in processed_data_dict["data"]]
     min_desc_length = min(description_lengths)
@@ -167,21 +169,41 @@ def process_data(data_dict, backprop_timesteps):
           avg_desc_length, median_desc_length)
     print(min_python_length, max_python_length, 
           avg_python_length, median_python_length)
+
+    # Split into training, validation, and test sets
+    training_size = ((len(processed_data_dict["data"]) * 8) // 10) + 1
+    validation_size = len(processed_data_dict["data"]) // 10
+    test_size = len(processed_data_dict["data"]) // 10
+    training_data = {}
+    validation_data = {}
+    test_data = {}
+    random_descs = list(processed_data_dict["data"].keys())
+    shuffle(random_descs)
+    for i, description in enumerate(random_descs):
+        if i < training_size:
+            training_data[description] = processed_data_dict["data"][description]
+        elif training_size <= i < training_size + validation_size:
+            validation_data[description] = processed_data_dict["data"][description]
+        else:
+            test_data[description] = processed_data_dict["data"][description]
+    processed_data_dict["training_data"] = training_data
+    processed_data_dict["validation_data"] = validation_data
+    processed_data_dict["test_data"] = test_data
+
     return processed_data_dict
 
 
-def vectorize_data(processed_data_dict, backprop_timesteps):
+def vectorize_data(processed_data_dict, desc_chars, 
+                   python_chars, backprop_timesteps=0):
     # Collect metadata
-    desc_chars = processed_data_dict["description_chars"]
     desc_char_indices = {char: i for i, char in enumerate(desc_chars)}
-    python_chars = processed_data_dict["python_chars"]
     python_char_indices = {char: i for i, char in enumerate(python_chars)}
     description_lengths = [len(description) 
-                           for description in processed_data_dict["data"]]
+                           for description in processed_data_dict]
     min_desc_length = min(description_lengths)
     python_lengths = [[len(script) for script 
-                       in processed_data_dict["data"][desc]["python"]]
-                      for desc in processed_data_dict["data"]]
+                       in processed_data_dict[desc]["python"]]
+                      for desc in processed_data_dict]
     min_python_length = min(min(lengths, default=1000) for lengths in python_lengths)
     if (min_desc_length < backprop_timesteps 
             or min_python_length < backprop_timesteps):
@@ -191,7 +213,7 @@ def vectorize_data(processed_data_dict, backprop_timesteps):
     # Cut the data into sequences of backprop_timesteps characters
     desc_sequences = []
     python_sequences = []
-    for description in processed_data_dict["data"]:
+    for description in processed_data_dict:
         desc_sequences.append([description[i: i+backprop_timesteps] 
             for i in range(0, len(description)-backprop_timesteps, backprop_timesteps//2)])
         leftover_index = (len(description)-backprop_timesteps) % (backprop_timesteps//2)
@@ -200,7 +222,7 @@ def vectorize_data(processed_data_dict, backprop_timesteps):
             last_desc_sequence += "§"
         desc_sequences[-1].append(last_desc_sequence)
         python_sequences.append([])
-        python_solutions = processed_data_dict["data"][description]["python"]
+        python_solutions = processed_data_dict[description]["python"]
         for script in python_solutions:
             python_sequences[-1].append([script[i: i+backprop_timesteps] 
                 for i in range(0, len(script)-backprop_timesteps, backprop_timesteps//2)])
@@ -208,10 +230,6 @@ def vectorize_data(processed_data_dict, backprop_timesteps):
             last_script_sequence = script[len(script)-1-leftover_index:]
             for i in range(backprop_timesteps - len(script) + leftover_index):
                 last_script_sequence += "§"
-            if len(last_script_sequence) > 50:
-                print(last_script_sequence)
-                print(len(last_script_sequence))
-                raise NotImplementedError
             python_sequences[-1][-1].append(last_script_sequence)
 
     # Vectorize
@@ -219,13 +237,12 @@ def vectorize_data(processed_data_dict, backprop_timesteps):
     for desc_list, desc_script_list in zip(desc_sequences, python_sequences):
         for sequences in desc_script_list:
             training_example_count += len(desc_list) * len(sequences)
-    print(training_example_count)
+    print("Training examples:", training_example_count)
     description_array = np.zeros(
         (training_example_count, backprop_timesteps, len(desc_chars)), dtype=np.bool)
     python_solution_array = np.zeros(
         (training_example_count, backprop_timesteps, len(python_chars)), dtype=np.bool)
-    print(description_array.size)
-    print(python_solution_array.size)
+    print(description_array.size, python_solution_array.size)
     outer_index = 0
     for i, (desc_seqs, desc_script_list) in enumerate(
             zip(desc_sequences, python_sequences)):
@@ -237,58 +254,7 @@ def vectorize_data(processed_data_dict, backprop_timesteps):
                     python_solution_array[outer_index, m, python_char_indices[char]] = 1
                 outer_index += 1
 
-    print("Splitting into training, validation, and test sets...")
-    # Split into training, validation, and test sets
-    training_size = ((training_example_count * 8) // 10) + 1
-    validation_size = training_example_count // 10
-    test_size = training_example_count // 10
-    description_array_train = np.zeros(
-        (training_size, max_desc_length, len(desc_chars)), dtype=np.bool)
-    solution_array_train = np.zeros(
-        (training_size, max_python_length, len(python_chars)), dtype=np.bool)
-    description_array_valid = np.zeros(
-        (validation_size, max_desc_length, len(desc_chars)), dtype=np.bool)
-    solution_array_valid = np.zeros(
-        (validation_size, max_python_length, len(python_chars)), dtype=np.bool)
-    description_array_test = np.zeros(
-        (test_size, max_desc_length, len(desc_chars)), dtype=np.bool)
-    solution_array_test = np.zeros(
-        (test_size, max_python_length, len(python_chars)), dtype=np.bool)
-    random_range = list(range(training_example_count))
-    shuffle(random_range)
-    for i in range(description_array.shape[0]):
-        print(i, "out of", description_array.shape[0])
-        for j in range(description_array.shape[1]):
-            for k in range(description_array.shape[2]):
-                if i <= training_size - 1:
-                    index = i
-                    i = random_range[i]
-                    description_array_train[index, j, k] = description_array[i, j, k]
-                elif training_size <= i <= training_size + validation_size - 1:
-                    index = i - training_size
-                    i = random_range[i]
-                    description_array_valid[index, j, k] = description_array[i, j, k]
-                else:
-                    index = i - training_size - validation_size
-                    i = random_range[i]
-                    description_array_test[index, j, k] = description_array[i, j, k]
-        for j in range(python_solution_array.shape[1]):
-            for k in range(python_solution_array.shape[2]):
-                if i <= training_size - 1:
-                    index = i
-                    i = random_range[i]
-                    solution_array_train[index, j, k] = python_solution_array[i, j, k]
-                elif training_size <= i <= training_size + validation_size - 1:
-                    index = i - training_size
-                    i = random_range[i]
-                    solution_array_valid[index, j, k] = python_solution_array[i, j, k]
-                else:
-                    index = i - training_size - validation_size
-                    i = random_range[i]
-                    solution_array_test[index, j, k] = python_solution_array[i, j, k]
-
-    return (description_array_train, solution_array_train, description_array_valid,
-            solution_array_valid, description_array_test, solution_array_test)
+    return description_array, python_solution_array
 
 
 if __name__ == '__main__':
