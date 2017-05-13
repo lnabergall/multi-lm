@@ -193,6 +193,34 @@ def process_data(data_dict, backprop_timesteps):
     return processed_data_dict
 
 
+def vectorize_example(description, python_solution, desc_chars, 
+                      python_chars, as_collection=False):
+    desc_char_indices = {char: i for i, char in enumerate(desc_chars)}
+    python_char_indices = {char: i for i, char in enumerate(python_chars)}
+    if as_collection:
+        description_array = np.zeros(
+            (1, len(description), len(desc_chars)), dtype=np.bool)
+        python_solution_array = np.zeros(
+            (1, len(python_solution), len(python_chars)), dtype=np.bool)
+    else:
+        description_array = np.zeros(
+            (len(description), len(desc_chars)), dtype=np.bool)
+        python_solution_array = np.zeros(
+            (len(python_solution), len(python_chars)), dtype=np.bool)
+    for i, char in enumerate(description):
+        if as_collection:
+            description_array[0, i, desc_char_indices[char]] = 1
+        else:
+            description_array[i, desc_char_indices[char]] = 1
+    for i, char in enumerate(python_solution):
+        if as_collection:
+            python_solution_array[0, i, python_char_indices[char]] = 1
+        else:
+            python_solution_array[i, python_char_indices[char]] = 1
+
+    return description_array, python_solution_array
+
+
 def vectorize_data(processed_data_dict, desc_chars, 
                    python_chars, backprop_timesteps=0):
     # Collect metadata
@@ -242,7 +270,8 @@ def vectorize_data(processed_data_dict, desc_chars,
         (training_example_count, backprop_timesteps, len(desc_chars)), dtype=np.bool)
     python_solution_array = np.zeros(
         (training_example_count, backprop_timesteps, len(python_chars)), dtype=np.bool)
-    print(description_array.size, python_solution_array.size)
+    print("Description array size:", description_array.size)
+    print("Python script array size:", python_solution_array.size)
     outer_index = 0
     for i, (desc_seqs, desc_script_list) in enumerate(
             zip(desc_sequences, python_sequences)):
