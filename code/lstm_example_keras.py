@@ -8,7 +8,8 @@ from collections import OrderedDict
 
 import numpy as np
 from keras.models import Sequential
-from keras.layers import Dense, Activation, LSTM, RepeatVector
+from keras.layers import (Dense, Activation, LSTM, 
+                          RepeatVector, TimeDistributed)
 from keras.optimizers import (RMSprop, SGD, Adagrad, 
                               Adadelta, Adam, Adamax, Nadam)
 
@@ -17,7 +18,7 @@ import data_processing as dp
 
 HIDDEN_DIM = 128
 LEARNING_RATE = 0.005
-BACKPROP_TIMESTEPS = 50
+BACKPROP_TIMESTEPS = 0
 BATCH_SIZE = 128
 SUPER_BATCHES = 50
 
@@ -33,24 +34,26 @@ def shuffle_dict(dictionary):
 
 def build_model(input_dim, output_dim):
     model = Sequential()
-    model.add(LSTM(HIDDEN_DIM, input_shape=(
-        BACKPROP_TIMESTEPS, input_dim), return_sequences=False))
-    model.add(RepeatVector(BACKPROP_TIMESTEPS))
-    model.add(LSTM(HIDDEN_DIM, input_shape=(
-        BACKPROP_TIMESTEPS, HIDDEN_DIM), return_sequences=True))
-    model.add(Dense(output_dim))
-    model.add(Activation("softmax"))
+    model.add(LSTM(HIDDEN_DIM, input_dim=input_dim, return_sequences=False))
+    if BACKPROP_TIMESTEPS:
+        model.add(RepeatVector(BACKPROP_TIMESTEPS))
+    else:
+        model.add(RepeatVector(dp.MAX_SCRIPT_LENGTH))
+    model.add(LSTM(HIDDEN_DIM, return_sequences=True))
+    model.add(TimeDistributed(Dense(output_dim)))
+    model.add(TimeDistributed(Activation("softmax")))
     optimizer = RMSprop(lr=LEARNING_RATE)
     model.compile(loss="categorical_crossentropy", optimizer=optimizer)
+    model.summary()
     return model
 
 
 def sample(probability_array, temperature=1.0):
-    predications = np.asarray(probability_array).astype("float64")
-    predications = np.log(predications) / temperature
-    exp_predictions = np.exp(predications)
-    predications = exp_predictions / np.sum(exp_predictions)
-    return np.random.multinomial(1, predications, 1)
+    predictions = np.asarray(probability_array).astype("float64")
+    predictions = np.log(predictions) / temperature
+    exp_predictions = np.exp(predictions)
+    predictions = exp_predictions / np.sum(exp_predictions)
+    return np.argmax(np.random.multinomial(1, predictions, 1))
 
 
 def evaluate_model(model, data_dict, description_chars, script_chars):
@@ -79,8 +82,8 @@ def generate_output(model, description_array, diversity, script_chars):
     script_indices_char = {i: char for i, char in enumerate(script_chars)}
     predictions = model.predict(description_array)
     output = ""
-    for i in range(predications.shape[0]):
-        next_index = sample(predications[i], diversity)
+    for i in range(predictions.shape[1]):
+        next_index = sample(predictions[0,i,:], diversity)
         next_char = script_indices_char[next_index]
         output += next_char
     return output
@@ -90,7 +93,7 @@ def main():
     print("\nFetching data...")
     data = dp.get_data()
     print("\nProcessing data...")
-    processed_data = dp.process_data(data, BACKPROP_TIMESTEPS)
+    processed_data = dp.process_data(data)
     description_chars = processed_data["description_chars"]
     script_chars = processed_data["python_chars"]
     training_data_dict = OrderedDict(processed_data["training_data"])
@@ -117,12 +120,13 @@ def main():
                 print("Training model...")
                 model.fit(super_batch, super_batch_labels, 
                           batch_size=BATCH_SIZE, epochs=1)
+                print("\n---- Sample Output:")
+                description = list(validation_data_dict.keys())[-1]
+                print("-- Description:")
+                print(description)
                 for diversity in [0.2, 0.4, 0.6, 1.0]:
-                    print("\n---- diversity:", diversity)
-                    description = list(validation_data_dict.keys())[-1]
+                    print("\n-- diversity:", diversity)
                     script = validation_data_dict[description]["python"][0]
-                    print("-- Description:")
-                    print(description)
                     description_array, _ = dp.vectorize_example(
                         description, script, description_chars, 
                         script_chars, as_collection=True)
