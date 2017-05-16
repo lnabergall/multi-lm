@@ -14,8 +14,9 @@ if not os.path.exists(BASE_DIR):
 
 
 PAD_CHARACTER = "\n"
-MAX_SCRIPT_LENGTH = 1000
+PAD_VALUE = 0
 MAX_DESCRIPTION_LENGTH = 4244
+MAX_SCRIPT_LENGTH = 1000
 
 
 def get_data():
@@ -203,12 +204,12 @@ def vectorize_example(description, python_solution, desc_chars,
         description_array = np.zeros(
             (1, len(description), len(desc_chars)), dtype=np.bool)
         python_solution_array = np.zeros(
-            (1, len(python_solution), len(python_chars)), dtype=np.bool)
+            (1, MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
     else:
         description_array = np.zeros(
             (len(description), len(desc_chars)), dtype=np.bool)
         python_solution_array = np.zeros(
-            (len(python_solution), len(python_chars)), dtype=np.bool)
+            (MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
     for i, char in enumerate(description):
         if as_collection:
             description_array[0, i, desc_char_indices[char]] = 1
@@ -235,49 +236,41 @@ def vectorize_data(processed_data_dict, desc_chars,
                        in processed_data_dict[desc]["python"]]
                       for desc in processed_data_dict]
     min_python_length = min(min(lengths, default=1000) for lengths in python_lengths)
-    if backprop_timesteps and (min_desc_length < backprop_timesteps 
-            or min_python_length < backprop_timesteps):
-        raise ValueError("Need to backprop for fewer timesteps! "
-                         "Or change implementation...")
 
     # Cut the data into sequences of backprop_timesteps characters
     desc_sequences = []
     python_sequences = []
     for description in processed_data_dict:
         if backprop_timesteps:
-            sequences = [description[i: i+backprop_timesteps] for i in 
-                range(0, len(description)-backprop_timesteps, backprop_timesteps//2)]
-            desc_sequences.append(sequences)
-            leftover_index = (len(description)-backprop_timesteps) % (backprop_timesteps//2)
-            last_desc_sequence = description[len(description)-1-leftover_index:]
-            for i in range(backprop_timesteps - len(description) + leftover_index):
-                last_desc_sequence += PAD_CHARACTER
-            desc_sequences[-1].append(last_desc_sequence)
+            if len(description) < backprop_timesteps:
+                padding = PAD_CHARACTER * (backprop_timesteps - len(description))
+                desc_sequences.append([padding + description])
+            else:
+                sequences = [description[i: i+backprop_timesteps] for i in 
+                    range(0, len(description)-backprop_timesteps, backprop_timesteps//2)]
+                desc_sequences.append(sequences)
+                leftover_index = ((len(description)-backprop_timesteps) 
+                                  % (backprop_timesteps//2))
+                last_desc_sequence = description[len(description)-1-leftover_index:]
+                padding = PAD_CHARACTER * (
+                    backprop_timesteps-len(description)+leftover_index)
+                desc_sequences[-1].append(padding + last_desc_sequence)
         else:
-            description_seq = (description 
-                + PAD_CHARACTER * (MAX_DESCRIPTION_LENGTH - len(description)))
-            desc_sequences.append([description_seq])
+            padding = PAD_CHARACTER * (MAX_DESCRIPTION_LENGTH-len(description))
+            desc_sequences.append([padding + description])
         python_sequences.append([])
         python_solutions = processed_data_dict[description]["python"]
         for script in python_solutions:
-            if backprop_timesteps:
-                if len(script) < backprop_timesteps:
-                    script_sequence = (script + 
-                        PAD_CHARACTER*(backprop_timesteps-len(script)))
-                    python_sequences[-1].append([script_sequence])
-                else:
-                    script_sequences = [script[i: i+backprop_timesteps] for i in 
-                        range(0, len(script)-backprop_timesteps, backprop_timesteps//2)]
-                    python_sequences[-1].append(script_sequences)
-                    leftover_index = ((len(script)-backprop_timesteps) 
-                                      % (backprop_timesteps//2))
-                    last_script_sequence = script[len(script)-1-leftover_index:]
-                    for i in range(backprop_timesteps - len(script) + leftover_index):
-                        last_script_sequence += PAD_CHARACTER
-                    python_sequences[-1][-1].append(last_script_sequence)
+            if not backprop_timesteps or len(script) < backprop_timesteps:
+                python_sequences[-1].append([script])
             else:
-                script_seq = script + PAD_CHARACTER * (MAX_SCRIPT_LENGTH - len(script))
-                python_sequences[-1].append([script_seq])
+                script_sequences = [script[i: i+backprop_timesteps] for i in 
+                    range(0, len(script)-backprop_timesteps, backprop_timesteps//2)]
+                python_sequences[-1].append(script_sequences)
+                leftover_index = ((len(script)-backprop_timesteps) 
+                                  % (backprop_timesteps//2))
+                last_script_sequence = script[len(script)-1-leftover_index:]
+                python_sequences[-1][-1].append(last_script_sequence)
 
     # Vectorize
     training_example_count = 0
@@ -289,7 +282,7 @@ def vectorize_data(processed_data_dict, desc_chars,
         description_array = np.zeros((training_example_count, 
             backprop_timesteps, len(desc_chars)), dtype=np.bool)
         python_solution_array = np.zeros((training_example_count, 
-            backprop_timesteps, len(python_chars)), dtype=np.bool)
+            MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
     else:
         description_array = np.zeros((training_example_count, 
             MAX_DESCRIPTION_LENGTH, len(desc_chars)), dtype=np.bool)
@@ -306,6 +299,9 @@ def vectorize_data(processed_data_dict, desc_chars,
                     description_array[outer_index, m, desc_char_indices[char]] = 1
                 for m, char in enumerate(script_seq):
                     python_solution_array[outer_index, m, python_char_indices[char]] = 1
+                # for m in range(len(script_seq), MAX_SCRIPT_LENGTH):
+                #     python_solution_array[
+                #         outer_index, m, python_char_indices[PAD_CHARACTER]] = 1
                 outer_index += 1
 
     return description_array, python_solution_array
