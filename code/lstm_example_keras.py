@@ -5,20 +5,24 @@ Example implementation of a vanilla LSTM network in Keras.
 from statistics import mean
 from random import shuffle
 from collections import OrderedDict
+from datetime import datetime
 
 import numpy as np
 from keras.models import Sequential
-from keras.layers import (Dense, Activation, LSTM, 
+from keras.layers import (Dense, Activation, LSTM, Masking,
                           RepeatVector, TimeDistributed)
 from keras.optimizers import (RMSprop, SGD, Adagrad, 
                               Adadelta, Adam, Adamax, Nadam)
+from keras.callbacks import TensorBoard
 
 import data_processing as dp
+from data_processing import (PAD_VALUE, MAX_DESCRIPTION_LENGTH, 
+                             MAX_SCRIPT_LENGTH)
 
 
 HIDDEN_DIM = 128
 LEARNING_RATE = 0.005
-BACKPROP_TIMESTEPS = 0
+BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 128
 SUPER_BATCHES = 50
 
@@ -32,20 +36,39 @@ def shuffle_dict(dictionary):
     return shuffled_dictionary
 
 
+def get_output_masks(data_labels_array):
+    output_masks = np.zeros((data_labels_array.shape[0], 
+                             data_labels_array.shape[1]), dtype=np.float32)
+    for i in range(data_labels_array.shape[0]):
+        for j in range(data_labels_array.shape[1]):
+            if np.any(data_labels_array[i, j, :]):
+                output_masks[i, j] = 1
+    return output_masks
+
+
 def build_model(input_dim, output_dim):
     model = Sequential()
+    model.add(Masking(mask_value=dp.PAD_VALUE, 
+                      input_shape=(BACKPROP_TIMESTEPS, input_dim)))
     model.add(LSTM(HIDDEN_DIM, input_dim=input_dim, return_sequences=False))
-    if BACKPROP_TIMESTEPS:
-        model.add(RepeatVector(BACKPROP_TIMESTEPS))
-    else:
-        model.add(RepeatVector(dp.MAX_SCRIPT_LENGTH))
+    model.add(RepeatVector(dp.MAX_SCRIPT_LENGTH))
     model.add(LSTM(HIDDEN_DIM, return_sequences=True))
     model.add(TimeDistributed(Dense(output_dim)))
     model.add(TimeDistributed(Activation("softmax")))
-    optimizer = RMSprop(lr=LEARNING_RATE)
-    model.compile(loss="categorical_crossentropy", optimizer=optimizer)
+    optimizer = RMSprop(lr=LEARNING_RATE, clipnorm=5)
+    model.compile(loss="categorical_crossentropy", optimizer=optimizer, 
+                  sample_weight_mode="temporal")
     model.summary()
     return model
+
+
+def save_model(model):
+    model_json = model.to_json()
+    datetime_string = str(datetime.utcnow()).replace(":", "-")
+    datetime_string = datetime_string.replace(".", "-").replace(" ", "_")
+    with open("../models/model_" + datetime_string + ".json", "w") as model_file:
+        print(model_json, file=model_file)
+    model.save_weights("../models/model_weights_" + datetime_string + ".h5")
 
 
 def sample(probability_array, temperature=1.0):
@@ -102,6 +125,9 @@ def main():
 
     print("\nBuilding model...")
     model = build_model(len(description_chars), len(script_chars))
+    tensorboard_callback = TensorBoard(
+        log_dir='../models/tensorboard', histogram_freq=1, 
+        write_graph=True, write_images=True)
     try:
         for iteration in range(1, 60):
             training_data_dict = shuffle_dict(training_data_dict)
@@ -117,9 +143,11 @@ def main():
                 super_batch, super_batch_labels = dp.vectorize_data(
                     super_batch_dict, description_chars, 
                     script_chars, BACKPROP_TIMESTEPS)
+                output_masks = get_output_masks(super_batch_labels)
                 print("Training model...")
-                model.fit(super_batch, super_batch_labels, 
-                          batch_size=BATCH_SIZE, epochs=1)
+                model.fit(super_batch, super_batch_labels, batch_size=BATCH_SIZE, 
+                          epochs=1, sample_weight=output_masks, 
+                          callbacks=[tensorboard_callback])
                 print("\n---- Sample Output:")
                 description = list(validation_data_dict.keys())[-1]
                 print("-- Description:")
@@ -139,7 +167,9 @@ def main():
                     model, training_data_dict, description_chars, script_chars)
                 print("Training loss:", training_loss)
     except KeyboardInterrupt:
-        pass
+        save_model(model)
+        print("Model saved!")
+        raise
     print("\nTraining stopped.")
 
     validation_loss = evaluate_model(
