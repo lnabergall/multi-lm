@@ -48,8 +48,8 @@ def get_output_masks(data_labels_array):
 
 def build_model(input_dim, output_dim):
     model = Sequential()
-    model.add(Masking(mask_value=dp.PAD_VALUE, 
-                      input_shape=(BACKPROP_TIMESTEPS, input_dim)))
+    # model.add(Masking(mask_value=dp.PAD_VALUE, 
+    #                   input_shape=(BACKPROP_TIMESTEPS, input_dim)))
     model.add(LSTM(HIDDEN_DIM, input_dim=input_dim, return_sequences=False))
     model.add(RepeatVector(dp.MAX_SCRIPT_LENGTH))
     model.add(LSTM(HIDDEN_DIM, return_sequences=True))
@@ -140,10 +140,9 @@ def main():
                     for i, desc in enumerate(training_data_dict) 
                     if i in range((index*description_count)//SUPER_BATCHES, 
                                   ((index+1)*description_count)//SUPER_BATCHES + 1)}
-                super_batch, super_batch_labels = dp.vectorize_data(
+                super_batch, super_batch_labels, output_masks = dp.vectorize_data(
                     super_batch_dict, description_chars, 
                     script_chars, BACKPROP_TIMESTEPS)
-                output_masks = get_output_masks(super_batch_labels)
                 print("Training model...")
                 model.fit(super_batch, super_batch_labels, batch_size=BATCH_SIZE, 
                           epochs=1, sample_weight=output_masks, 
@@ -168,7 +167,7 @@ def main():
                 print("Training loss:", training_loss)
     except KeyboardInterrupt:
         save_model(model)
-        print("Model saved!")
+        print("\nModel saved!")
         raise
     print("\nTraining stopped.")
 

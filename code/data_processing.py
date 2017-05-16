@@ -288,6 +288,8 @@ def vectorize_data(processed_data_dict, desc_chars,
             MAX_DESCRIPTION_LENGTH, len(desc_chars)), dtype=np.bool)
         python_solution_array = np.zeros((training_example_count, 
             MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
+    solution_output_masks = np.zeros(
+        (training_example_count, MAX_SCRIPT_LENGTH), dtype=np.float32)
     print("Description array size:", description_array.size)
     print("Python script array size:", python_solution_array.size)
     outer_index = 0
@@ -299,12 +301,13 @@ def vectorize_data(processed_data_dict, desc_chars,
                     description_array[outer_index, m, desc_char_indices[char]] = 1
                 for m, char in enumerate(script_seq):
                     python_solution_array[outer_index, m, python_char_indices[char]] = 1
+                    solution_output_masks[outer_index, m] = 1
                 # for m in range(len(script_seq), MAX_SCRIPT_LENGTH):
                 #     python_solution_array[
                 #         outer_index, m, python_char_indices[PAD_CHARACTER]] = 1
                 outer_index += 1
 
-    return description_array, python_solution_array
+    return description_array, python_solution_array, solution_output_masks
 
 
 if __name__ == '__main__':
