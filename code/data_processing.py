@@ -16,7 +16,7 @@ if not os.path.exists(BASE_DIR):
 PAD_CHARACTER = "\n"
 PAD_VALUE = 0
 MAX_DESCRIPTION_LENGTH = 4244
-MAX_SCRIPT_LENGTH = 1000
+MAX_SCRIPT_LENGTH = 2000
 
 
 def get_data():
@@ -94,9 +94,11 @@ def process_data(data_dict):
     """
     desc_characters = set()
     desc_char_counts = {}
-    python_characters = set("<boc><eoc>" + PAD_CHARACTER)
+    python_characters = set()
+    # python_characters = set("<boc><eoc>" + PAD_CHARACTER)
     python_char_counts = {}
-    cplusplus_characters = set("<boc><eoc>" + PAD_CHARACTER)
+    cplusplus_characters = set()
+    # cplusplus_characters = set("<boc><eoc>" + PAD_CHARACTER)
     cplusplus_char_counts = {}
     for description in data_dict:
         cplusplus_solutions = data_dict[description]["c++"]
@@ -118,7 +120,7 @@ def process_data(data_dict):
                 if char not in cplusplus_char_counts:
                     cplusplus_char_counts[char] = 0
                 cplusplus_char_counts[char] += script.count(char)
-            script = "<boc>" + script + "<eoc>"
+            # script = "<boc>" + script + "<eoc>"
             cplusplus_solutions_new.append(script)
         data_dict[description_orig]["c++"] = cplusplus_solutions_new
         python_solutions_new = []
@@ -131,7 +133,7 @@ def process_data(data_dict):
                 if char not in python_char_counts:
                     python_char_counts[char] = 0
                 python_char_counts[char] += script.count(char)
-            script = "<boc>" + script + "<eoc>"
+            # script = "<boc>" + script + "<eoc>"
             python_solutions_new.append(script)
         data_dict[description_orig]["python"] = python_solutions_new
     desc_characters.discard("")
@@ -225,17 +227,13 @@ def vectorize_example(description, python_solution, desc_chars,
 
 
 def vectorize_data(processed_data_dict, desc_chars, 
-                   python_chars, backprop_timesteps=0):
-    # Collect metadata
-    desc_char_indices = {char: i for i, char in enumerate(desc_chars)}
-    python_char_indices = {char: i for i, char in enumerate(python_chars)}
-    description_lengths = [len(description) 
-                           for description in processed_data_dict]
-    min_desc_length = min(description_lengths)
-    python_lengths = [[len(script) for script 
-                       in processed_data_dict[desc]["python"]]
-                      for desc in processed_data_dict]
-    min_python_length = min(min(lengths, default=1000) for lengths in python_lengths)
+                   python_chars, dense=True, backprop_timesteps=50):
+    if dense:
+        desc_char_values = {char: i+2 for i, char in enumerate(desc_chars)}
+        python_char_values = {char: i+2 for i, char in enumerate(python_chars)}
+    else:
+        desc_char_indices = {char: i for i, char in enumerate(desc_chars)}
+        python_char_indices = {char: i for i, char in enumerate(python_chars)}
 
     # Cut the data into sequences of backprop_timesteps characters
     desc_sequences = []
@@ -243,8 +241,11 @@ def vectorize_data(processed_data_dict, desc_chars,
     for description in processed_data_dict:
         if backprop_timesteps:
             if len(description) < backprop_timesteps:
-                padding = PAD_CHARACTER * (backprop_timesteps - len(description))
-                desc_sequences.append([padding + description])
+                if dense:
+                    desc_sequences.append([description])
+                else:
+                    padding = PAD_CHARACTER * (backprop_timesteps - len(description))
+                    desc_sequences.append([padding + description])
             else:
                 sequences = [description[i: i+backprop_timesteps] for i in 
                     range(0, len(description)-backprop_timesteps, backprop_timesteps//2)]
@@ -252,12 +253,14 @@ def vectorize_data(processed_data_dict, desc_chars,
                 leftover_index = ((len(description)-backprop_timesteps) 
                                   % (backprop_timesteps//2))
                 last_desc_sequence = description[len(description)-1-leftover_index:]
-                padding = PAD_CHARACTER * (
-                    backprop_timesteps-len(description)+leftover_index)
-                desc_sequences[-1].append(padding + last_desc_sequence)
+                if dense:
+                    desc_sequences[-1].append(last_desc_sequence)
+                else:
+                    padding = PAD_CHARACTER * (
+                        backprop_timesteps-len(description)+leftover_index)
+                    desc_sequences[-1].append(padding + last_desc_sequence)
         else:
-            padding = PAD_CHARACTER * (MAX_DESCRIPTION_LENGTH-len(description))
-            desc_sequences.append([padding + description])
+            desc_sequences.append([description])
         python_sequences.append([])
         python_solutions = processed_data_dict[description]["python"]
         for script in python_solutions:
@@ -270,7 +273,12 @@ def vectorize_data(processed_data_dict, desc_chars,
                 leftover_index = ((len(script)-backprop_timesteps) 
                                   % (backprop_timesteps//2))
                 last_script_sequence = script[len(script)-1-leftover_index:]
-                python_sequences[-1][-1].append(last_script_sequence)
+                if dense:
+                    python_sequences[-1][-1].append(last_script_sequence)
+                else:
+                    padding = PAD_CHARACTER * (
+                        backprop_timesteps-len(script)+leftover_index)
+                    python_sequences[-1][-1].append(last_script_sequence + padding)
 
     # Vectorize
     training_example_count = 0
@@ -279,35 +287,65 @@ def vectorize_data(processed_data_dict, desc_chars,
             training_example_count += len(desc_list) * len(sequences)
     print("Training examples:", training_example_count)
     if backprop_timesteps:
-        description_array = np.zeros((training_example_count, 
-            backprop_timesteps, len(desc_chars)), dtype=np.bool)
-        python_solution_array = np.zeros((training_example_count, 
-            MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
+        if dense:
+            description_array = np.zeros((training_example_count, 
+                backprop_timesteps), dtype=np.int8)
+            python_solution_array = np.zeros((training_example_count, 
+                backprop_timesteps), dtype=np.int8)
+        else:
+            description_array = np.zeros((training_example_count, 
+                backprop_timesteps, len(desc_chars)), dtype=np.bool)
+            python_solution_array = np.zeros((training_example_count, 
+                MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
     else:
-        description_array = np.zeros((training_example_count, 
-            MAX_DESCRIPTION_LENGTH, len(desc_chars)), dtype=np.bool)
-        python_solution_array = np.zeros((training_example_count, 
-            MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
-    solution_output_masks = np.zeros(
-        (training_example_count, MAX_SCRIPT_LENGTH), dtype=np.float32)
-    print("Description array size:", description_array.size)
-    print("Python script array size:", python_solution_array.size)
+        if dense:
+            description_array = np.zeros((training_example_count, 
+                MAX_DESCRIPTION_LENGTH), dtype=np.int8)
+            python_solution_array = np.zeros((training_example_count, 
+                MAX_SCRIPT_LENGTH), dtype=np.int8)
+        else:
+            description_array = np.zeros((training_example_count, 
+                MAX_DESCRIPTION_LENGTH, len(desc_chars)), dtype=np.bool)
+            python_solution_array = np.zeros((training_example_count, 
+                MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
+    if not dense:
+        solution_output_masks = np.zeros(
+            (training_example_count, MAX_SCRIPT_LENGTH), dtype=np.float32)
+    print("Description array size:", description_array.size*8)
+    print("Python script array size:", python_solution_array.size*8)
+    desc_sequence_lengths = []
+    python_sequence_lengths = []
     outer_index = 0
     for i, (desc_seqs, desc_script_list) in enumerate(
             zip(desc_sequences, python_sequences)):
         for j, script_seqs in enumerate(desc_script_list):
             for k, (desc_seq, script_seq) in enumerate(product(desc_seqs, script_seqs)):
+                if dense:
+                    desc_sequence_lengths.append(len(desc_seq))
+                    python_sequence_lengths.append(len(script_seq))
                 for m, char in enumerate(desc_seq):
-                    description_array[outer_index, m, desc_char_indices[char]] = 1
+                    if dense:
+                        description_array[outer_index, m] = desc_char_values[char]
+                    else:
+                        description_array[outer_index, m, desc_char_indices[char]] = 1
                 for m, char in enumerate(script_seq):
-                    python_solution_array[outer_index, m, python_char_indices[char]] = 1
-                    solution_output_masks[outer_index, m] = 1
-                # for m in range(len(script_seq), MAX_SCRIPT_LENGTH):
-                #     python_solution_array[
-                #         outer_index, m, python_char_indices[PAD_CHARACTER]] = 1
+                    if dense:
+                        python_solution_array[outer_index, m] = python_char_values[char]
+                    else:
+                        python_solution_array[
+                            outer_index, m, python_char_indices[char]] = 1
+                    if not dense:
+                        solution_output_masks[outer_index, m] = 1
                 outer_index += 1
 
-    return description_array, python_solution_array, solution_output_masks
+    if dense:
+        # Change from batch-major to time-major
+        description_array = description_array.swapaxes(0, 1)
+        python_solution_array = python_solution_array.swapaxes(0, 1)
+        return (description_array, python_solution_array, 
+                desc_sequence_lengths, python_sequence_lengths)
+    else:
+        return description_array, python_solution_array, solution_output_masks
 
 
 if __name__ == '__main__':
