@@ -3,6 +3,7 @@
 from math import sqrt
 
 import numpy as np
+import matplotlib.pyplot as plotter
 import tensorflow as tf
 from tensorflow.contrib.rnn import (LSTMCell, MultiRNNCell, LSTMStateTuple, 
                                     DropoutWrapper, ResidualWrapper)
@@ -15,11 +16,11 @@ from data_processing import (PAD_VALUE, MAX_DESCRIPTION_LENGTH,
                              MAX_SCRIPT_LENGTH)
 
 
-HIDDEN_DIM = 128
+HIDDEN_DIM = 64
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 128
-SUPER_BATCHES = 50
+EPOCHS = 50
 
 
 class Seq2SeqModel():
@@ -134,10 +135,10 @@ class Seq2SeqModel():
                 inputs=self.encoder_inputs_embedded, 
                 sequence_length=self.encoder_inputs_length, 
                 time_major=True, dtype=tf.float32)
-             self.encoder_outputs = tf.concat(
+            self.encoder_outputs = tf.concat(
                 (encoder_fw_outputs, encoder_bw_outputs), 2)
 
-             if isinstance(encoder_fw_state, LSTMStateTuple):
+            if isinstance(encoder_fw_state, LSTMStateTuple):
                 encoder_state_c = tf.concat(
                     (encoder_fw_state.c, encoder_bw_state.c), 
                     1, name="bidirectional_concat_c")
@@ -175,7 +176,7 @@ class Seq2SeqModel():
             scope.reuse_variables()
 
             _, batch_size = tf.unstack(tf.shape(self.decoder_targets))
-            start_tokens = tf.ones(batch_size, dtype=int32) * self.EOS
+            start_tokens = tf.ones(batch_size, dtype=float32) * self.EOS
             inference_helper = GreedyEmbeddingHelper(self.decoder_embedding_matrix, 
                                                      start_tokens=start_tokens, 
                                                      end_token=self.EOS)
@@ -188,29 +189,37 @@ class Seq2SeqModel():
                 self.decoder_logits_inference, axis=-1, 
                 name="decoder_prediction_inference")
 
-        def _init_optimizer(self):
-            logits = tf.transpose(self.decoder_logits_train, [1, 0, 2])
-            targets = tf.transpose(self.decoder_train_targets, [1, 0])
-            self.loss = sequence_loss(logits=logits, targets=targets,
-                                      weights=self.loss_weights)
-            self.train_op = tf.train.AdamOptimizer().minimize(self.loss)
+    def _init_optimizer(self):
+        logits = tf.transpose(self.decoder_logits_train, [1, 0, 2])
+        targets = tf.transpose(self.decoder_train_targets, [1, 0])
+        self.loss = sequence_loss(logits=logits, targets=targets,
+                                  weights=self.loss_weights)
+        self.train_op = tf.train.RMSPropOptimizer(LEARNING_RATE).minimize(self.loss)
 
-        def make_train_inputs(self, input_seq, target_seq):
-            inputs_, inputs_length_ = dp.batch(input_seq)
-            targets_, targets_length_ = dp.batch(target_seq)
-            return {
-                self.encoder_inputs: inputs_,
-                self.encoder_inputs_length: inputs_length_,
-                self.decoder_targets: targets_,
-                self.decoder_targets_length: targets_length_,
-            }
+    def make_train_inputs(self, inputs_, inputs_length_, 
+                          targets_, targets_length_):
+        return {
+            self.encoder_inputs: inputs_,
+            self.encoder_inputs_length: inputs_length_,
+            self.decoder_targets: targets_,
+            self.decoder_targets_length: targets_length_,
+        }
 
-        def make_inference_inputs(self, input_seq):
-            inputs_, inputs_length_ = dp.batch(input_seq)
-            return {
-                self.encoder_inputs: inputs_,
-                self.encoder_inputs_length: inputs_length_,
-            }
+    def make_inference_inputs(self, inputs_, inputs_length_):
+        return {
+            self.encoder_inputs: inputs_,
+            self.encoder_inputs_length: inputs_length_,
+        }
+
+    def save(self):
+        pass
+
+
+def randomize_insync(*args):
+    state = np.random.get_state()
+    for collection in args:
+        np.random.shuffle(collection)
+        np.random.set_state(state)
 
 
 def main():
@@ -220,13 +229,19 @@ def main():
     processed_data = dp.process_data(data)
     description_chars = processed_data["description_chars"]
     script_chars = processed_data["python_chars"]
-    training_data_dict = OrderedDict(processed_data["training_data"])
+    training_data_dict = processed_data["training_data"]
     validation_data_dict = processed_data["validation_data"]
     test_data_dict = processed_data["test_data"]
+    print("\nVectorizing data...")
+    train_inputs, train_targets, train_input_lengths, train_target_lengths \
+        = dp.vectorize_data(training_data_dict, description_chars, 
+                            script_chars, dense=True, 
+                            backprop_timesteps=BACKPROP_TIMESTEPS)
 
     tf.reset_default_graph()
-    tf.set_random_seed()
+    tf.set_random_seed(1)
     with tf.Session() as session:
+        print("\nCreating model...")
         model = Seq2SeqModel(encoder_cell=LSTMCell(HIDDEN_DIM),
                              decoder_cell=LSTMCell(HIDDEN_DIM),
                              encoder_vocab_size=len(description_chars),
@@ -236,4 +251,43 @@ def main():
                              attention=False,
                              bidirectional=False)
         session.run(tf.global_variables_initializer())
-        
+        loss_track = []
+        try:
+            for epoch in range(EPOCHS):
+                randomize_insync(train_inputs, train_targets, 
+                                 train_input_lengths, train_target_lengths)
+                print("\nBatching data...")
+                input_batches = []
+                target_batches = []
+                input_batch_lengths = []
+                target_batch_lengths = []
+                batch_count = (train_inputs.shape[0]+batch_size-1) // BATCH_SIZE
+                for i in range(batch_count):
+                    input_batches.append(train_inputs[
+                        i*BATCH_SIZE:(i+1)*BATCH_SIZE,:])
+                    target_batches.append(train_targets[
+                        i*BATCH_SIZE:(i+1)*BATCH_SIZE,:])
+                    input_batch_lengths.append(train_input_lengths[
+                        i*BATCH_SIZE:(i+1)*BATCH_SIZE])
+                    target_batch_lengths.append(train_target_lengths[
+                        i*BATCH_SIZE:(i+1)*BATCH_SIZE])
+                for i in range(batch_count):
+                    feed_dict = model.make_train_inputs(
+                        input_batches[i], input_batch_lengths[i], 
+                        target_batches[i], target_batch_lengths[i])
+                    print("Epoch", epoch, ": training on batch", i)
+                    _, loss = session.run([model.train_op, model.loss], feed_dict)
+                    print("Loss:", loss, "\n")
+                    loss_track.append(loss)
+        except KeyboardInterrupt:
+            print("Training interrupted!")
+        else:
+            print("Training completed!")
+
+        plotter.plot(loss_track)
+        plotter.show()
+        print("Final loss:", loss_track[-1])
+
+
+if __name__ == '__main__':
+    main()
