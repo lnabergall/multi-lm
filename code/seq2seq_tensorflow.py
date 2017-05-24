@@ -9,6 +9,8 @@ from tensorflow.contrib.rnn import (LSTMCell, MultiRNNCell, LSTMStateTuple,
                                     DropoutWrapper, ResidualWrapper)
 from tensorflow.contrib.seq2seq import (BasicDecoder, dynamic_decode, 
                                         TrainingHelper, GreedyEmbeddingHelper,
+                                        ScheduledOutputTrainingHelper,
+                                        ScheduledEmbeddingTrainingHelper,
                                         sequence_loss)
 
 import data_processing as dp
@@ -44,6 +46,10 @@ class Seq2SeqModel():
 
         self._make_graph()
 
+    @property
+    def decoder_hidden_units(self):
+        return self.decoder_cell.output_size
+
     def _make_graph(self):
         self._init_placeholders()
         self._init_decoder_train_connectors()
@@ -56,7 +62,6 @@ class Seq2SeqModel():
 
         self._init_decoder()
         self._init_optimizer()
-
 
     def _init_placeholders(self):
         """Everything is time-major."""
@@ -166,7 +171,8 @@ class Seq2SeqModel():
             train_decoder = BasicDecoder(cell=self.decoder_cell, 
                                          helper=train_helper, 
                                          initial_state=self.encoder_state)
-            self.decoder_outputs_train, self.decoder_state_train = dynamic_decode(
+            (self.decoder_outputs_train, self.decoder_state_train, 
+             self.decoder_sequence_lengths) = dynamic_decode(
                 train_decoder, output_time_major=True, scope=scope)
 
             self.decoder_logits_train = output_fn(self.decoder_outputs_train)
