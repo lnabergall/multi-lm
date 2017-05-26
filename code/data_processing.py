@@ -87,6 +87,26 @@ def correct_spelling(spell_correct_dict, textacy_doc):
     return text
 
 
+def split_processed_data(processed_data_dict):
+    training_size = ((len(processed_data_dict["data"]) * 8) // 10) + 1
+    validation_size = len(processed_data_dict["data"]) // 10
+    test_size = len(processed_data_dict["data"]) // 10
+    training_data = {}
+    validation_data = {}
+    test_data = {}
+    random_descs = list(processed_data_dict["data"].keys())
+    shuffle(random_descs)
+    for i, description in enumerate(random_descs):
+        if i < training_size:
+            training_data[description] = processed_data_dict["data"][description]
+        elif training_size <= i < training_size + validation_size:
+            validation_data[description] = processed_data_dict["data"][description]
+        else:
+            test_data[description] = processed_data_dict["data"][description]
+
+    return training_data, validation_data, test_data
+
+
 def process_data(data_dict):
     """
     Collect character information and add special beginning 
@@ -95,10 +115,8 @@ def process_data(data_dict):
     desc_characters = set()
     desc_char_counts = {}
     python_characters = set()
-    # python_characters = set("<boc><eoc>" + PAD_CHARACTER)
     python_char_counts = {}
     cplusplus_characters = set()
-    # cplusplus_characters = set("<boc><eoc>" + PAD_CHARACTER)
     cplusplus_char_counts = {}
     for description in data_dict:
         cplusplus_solutions = data_dict[description]["c++"]
@@ -120,7 +138,6 @@ def process_data(data_dict):
                 if char not in cplusplus_char_counts:
                     cplusplus_char_counts[char] = 0
                 cplusplus_char_counts[char] += script.count(char)
-            # script = "<boc>" + script + "<eoc>"
             cplusplus_solutions_new.append(script)
         data_dict[description_orig]["c++"] = cplusplus_solutions_new
         python_solutions_new = []
@@ -133,7 +150,6 @@ def process_data(data_dict):
                 if char not in python_char_counts:
                     python_char_counts[char] = 0
                 python_char_counts[char] += script.count(char)
-            # script = "<boc>" + script + "<eoc>"
             python_solutions_new.append(script)
         data_dict[description_orig]["python"] = python_solutions_new
     desc_characters.discard("")
@@ -176,21 +192,8 @@ def process_data(data_dict):
           avg_python_length, median_python_length)
 
     # Split into training, validation, and test sets
-    training_size = ((len(processed_data_dict["data"]) * 8) // 10) + 1
-    validation_size = len(processed_data_dict["data"]) // 10
-    test_size = len(processed_data_dict["data"]) // 10
-    training_data = {}
-    validation_data = {}
-    test_data = {}
-    random_descs = list(processed_data_dict["data"].keys())
-    shuffle(random_descs)
-    for i, description in enumerate(random_descs):
-        if i < training_size:
-            training_data[description] = processed_data_dict["data"][description]
-        elif training_size <= i < training_size + validation_size:
-            validation_data[description] = processed_data_dict["data"][description]
-        else:
-            test_data[description] = processed_data_dict["data"][description]
+    training_data, validation_data, test_data = split_processed_data(
+        processed_data_dict)
     processed_data_dict["training_data"] = training_data
     processed_data_dict["validation_data"] = validation_data
     processed_data_dict["test_data"] = test_data
@@ -198,10 +201,33 @@ def process_data(data_dict):
     return processed_data_dict
 
 
+def generate_char_labels(desc_char_counts, python_char_counts, dense,
+                         description_vocab_size, python_vocab_size):
+    desc_chars, python_chars = list(desc_char_counts), list(python_char_counts)
+    desc_chars.sort(key=lambda char: desc_char_counts[char], reverse=True)
+    python_chars.sort(key=lambda char: python_char_counts[char], reverse=True)
+    if dense:
+        desc_char_values = {char: i+2 for i, char in enumerate(desc_chars)}
+        python_char_values = {char: i+2 for i, char in enumerate(python_chars)}
+        if description_vocab_size:
+            for i, char in enumerate(desc_chars):
+                if i >= description_vocab_size:
+                    desc_char_values[char] = description_vocab_size + 2
+        if python_vocab_size:
+            for i, char in enumerate(python_chars):
+                if i >= python_vocab_size:
+                    python_char_values[char] = python_vocab_size + 2
+    else:
+        desc_char_values = {char: i for i, char in enumerate(desc_chars)}
+        python_char_values = {char: i for i, char in enumerate(python_chars)}
+
+    return desc_char_values, python_char_values
+
+
 def vectorize_example(description, python_solution, desc_chars, 
                       python_chars, as_collection=False):
-    desc_char_indices = {char: i for i, char in enumerate(desc_chars)}
-    python_char_indices = {char: i for i, char in enumerate(python_chars)}
+    desc_char_values = {char: i for i, char in enumerate(desc_chars)}
+    python_char_values = {char: i for i, char in enumerate(python_chars)}
     if as_collection:
         description_array = np.zeros(
             (1, len(description), len(desc_chars)), dtype=np.bool)
@@ -214,26 +240,26 @@ def vectorize_example(description, python_solution, desc_chars,
             (MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
     for i, char in enumerate(description):
         if as_collection:
-            description_array[0, i, desc_char_indices[char]] = 1
+            description_array[0, i, desc_char_values[char]] = 1
         else:
-            description_array[i, desc_char_indices[char]] = 1
+            description_array[i, desc_char_values[char]] = 1
     for i, char in enumerate(python_solution):
         if as_collection:
-            python_solution_array[0, i, python_char_indices[char]] = 1
+            python_solution_array[0, i, python_char_values[char]] = 1
         else:
-            python_solution_array[i, python_char_indices[char]] = 1
+            python_solution_array[i, python_char_values[char]] = 1
 
     return description_array, python_solution_array
 
 
-def vectorize_data(processed_data_dict, desc_chars, 
-                   python_chars, dense=True, backprop_timesteps=50):
-    if dense:
-        desc_char_values = {char: i+2 for i, char in enumerate(desc_chars)}
-        python_char_values = {char: i+2 for i, char in enumerate(python_chars)}
-    else:
-        desc_char_indices = {char: i for i, char in enumerate(desc_chars)}
-        python_char_indices = {char: i for i, char in enumerate(python_chars)}
+def vectorize_data(processed_data_dict, desc_char_counts, python_char_counts, 
+                   backprop_timesteps=50, dense=True, description_vocab_size=0,
+                   python_vocab_size=0):
+    desc_char_values, python_char_values = generate_char_labels(
+        desc_char_counts, python_char_counts, dense, 
+        description_vocab_size, python_vocab_size)
+    print(desc_char_values)
+    print(python_char_values)
 
     # Cut the data into sequences of backprop_timesteps characters
     desc_sequences = []
@@ -327,13 +353,13 @@ def vectorize_data(processed_data_dict, desc_chars,
                     if dense:
                         description_array[outer_index, m] = desc_char_values[char]
                     else:
-                        description_array[outer_index, m, desc_char_indices[char]] = 1
+                        description_array[outer_index, m, desc_char_values[char]] = 1
                 for m, char in enumerate(script_seq):
                     if dense:
                         python_solution_array[outer_index, m] = python_char_values[char]
                     else:
                         python_solution_array[
-                            outer_index, m, python_char_indices[char]] = 1
+                            outer_index, m, python_char_values[char]] = 1
                     if not dense:
                         solution_output_masks[outer_index, m] = 1
                 outer_index += 1

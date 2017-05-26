@@ -3,7 +3,7 @@ Sequence-to-sequence model implemented
 using tf.contrib.seq2seq from tensorflow 1.0.
 """
 
-from math import sqrt
+from math import sqrt, isnan
 
 import numpy as np
 import matplotlib.pyplot as plotter
@@ -18,6 +18,9 @@ from data_processing import (PAD_VALUE, MAX_DESCRIPTION_LENGTH,
                              MAX_SCRIPT_LENGTH)
 
 
+# Hyperparameters
+ENCODER_VOCAB_SIZE = 40
+DECODER_VOCAB_SIZE = 60
 HIDDEN_DIM = 64
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
@@ -232,18 +235,25 @@ def main():
     data = dp.get_data()
     print("\nProcessing data...")
     processed_data = dp.process_data(data)
-    description_chars = processed_data["description_chars"]
-    script_chars = processed_data["python_chars"]
+    description_chars = processed_data["description_char_counts"]
+    script_chars = processed_data["python_char_counts"]
     training_data_dict = processed_data["training_data"]
     validation_data_dict = processed_data["validation_data"]
     test_data_dict = processed_data["test_data"]
     print("\nVectorizing data...")
     train_inputs, train_targets, train_input_lengths, train_target_lengths \
         = dp.vectorize_data(training_data_dict, description_chars, 
-                            script_chars, dense=True, 
-                            backprop_timesteps=BACKPROP_TIMESTEPS)
-    description_values_count = len(description_chars) + 2
-    script_values_count = len(script_chars) + 2
+                            script_chars, backprop_timesteps=BACKPROP_TIMESTEPS,
+                            dense=True, description_vocab_size=ENCODER_VOCAB_SIZE, 
+                            python_vocab_size=DECODER_VOCAB_SIZE)
+    if ENCODER_VOCAB_SIZE:
+        description_values_count = ENCODER_VOCAB_SIZE + 3
+    else:
+        description_values_count = len(description_chars) + 2
+    if DECODER_VOCAB_SIZE:
+        script_values_count = DECODER_VOCAB_SIZE + 3
+    else:
+        script_values_count = len(script_chars) + 2
 
     tf.reset_default_graph()
     tf.set_random_seed(1)
@@ -285,6 +295,18 @@ def main():
                     print("Epoch", epoch, ": training on batch", i)
                     _, loss = session.run([model.train_op, model.loss], feed_dict)
                     print("Loss:", loss, "\n")
+                    if isnan(loss):
+                        np.set_printoptions(threshold=np.inf)
+                        with open("log_file.txt", "w") as log_file:
+                            print("Loss", prev_loss, file=log_file)
+                            print(prev_feed_dict, file=log_file)
+                            print("\n", file=log_file)
+                            print("Loss", loss, file=log_file)
+                            print(feed_dict, file=log_file)
+                        raise KeyboardInterrupt
+                    else:
+                        prev_feed_dict = feed_dict
+                        prev_loss = loss
                     loss_track.append(loss)
         except KeyboardInterrupt:
             print("Training interrupted!")
