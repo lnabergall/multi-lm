@@ -1,0 +1,15 @@
+Notes:
+- use masking + bucketing for batches to do truncated backprop
+
+Current Simplifications:
+- No duplicated thought vector?
+- Limited data set
+- Single layer
+- No bidirectional encoder (or decoder? etc.)
+- No residual connections (through time or layers)
+- No attention
+- Small hidden state
+- Character-level
+- 50 step truncated backprop (?)
+- Little overlap between sequences ('sparse data')
+- No pretraining as a language model (encoder + decoder)
