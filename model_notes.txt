@@ -5,7 +5,7 @@ Current Simplifications:
 - No duplicated thought vector?
 - Limited data set
 - Single layer
-- No bidirectional encoder (or decoder? etc.)
+- No bidirectional layers
 - No residual connections (through time or layers)
 - No attention
 - Small hidden state
@@ -13,3 +13,4 @@ Current Simplifications:
 - 50 step truncated backprop (?)
 - Little overlap between sequences ('sparse data')
 - No pretraining as a language model (encoder + decoder)
+- No character-level CNN on inputs
