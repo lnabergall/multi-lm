@@ -16,11 +16,12 @@ from tensorflow.contrib.seq2seq import (dynamic_rnn_decoder, simple_decoder_fn_t
 import data_processing as dp
 from data_processing import (PAD_VALUE, MAX_DESCRIPTION_LENGTH, 
                              MAX_SCRIPT_LENGTH)
+import helpers
 
 
 # Hyperparameters
-ENCODER_VOCAB_SIZE = 40
-DECODER_VOCAB_SIZE = 60
+ENCODER_VOCAB_SIZE = 0
+DECODER_VOCAB_SIZE = 0
 HIDDEN_DIM = 64
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
@@ -230,6 +231,49 @@ def randomize_insync(*args):
         np.random.set_state(state)
 
 
+def train_on_copy_task(session, model,
+                       length_from=3, length_to=8,
+                       vocab_lower=2, vocab_upper=10,
+                       batch_size=100,
+                       max_batches=5000,
+                       batches_in_epoch=1000,
+                       verbose=True):
+
+    batches = helpers.random_sequences(
+        length_from=length_from, length_to=length_to, vocab_lower=vocab_lower, 
+        vocab_upper=vocab_upper, batch_size=batch_size)
+    loss_track = []
+    fd = {}
+    l = 5
+    try:
+        for batch in range(max_batches+1):
+            prev_fd = fd
+            prev_l = l
+            batch_data = next(batches)
+            inputs, input_lengths = helpers.batch(batch_data)
+            fd = model.make_train_inputs(inputs, input_lengths, inputs, input_lengths)
+            _, l = session.run([model.train_op, model.loss], fd)
+            loss_track.append(l)
+            if verbose:
+                if batch == 0 or batch % batches_in_epoch == 0:
+                    print('batch {}'.format(batch))
+                    print('  minibatch loss: {}'.format(session.run(model.loss, fd)))
+                    for i, (e_in, dt_pred) in enumerate(zip(
+                            fd[model.encoder_inputs].T,
+                            session.run(model.decoder_prediction_train, fd).T
+                        )):
+                        print('  sample {}:'.format(i + 1))
+                        print('    enc input           > {}'.format(e_in))
+                        print('    dec train predicted > {}'.format(dt_pred))
+                        if i >= 2:
+                            break
+                    print()
+    except KeyboardInterrupt:
+        print('training interrupted')
+        
+    return loss_track
+
+
 def main():
     print("\nFetching data...")
     data = dp.get_data()
@@ -246,14 +290,15 @@ def main():
                             script_chars, backprop_timesteps=BACKPROP_TIMESTEPS,
                             dense=True, description_vocab_size=ENCODER_VOCAB_SIZE, 
                             python_vocab_size=DECODER_VOCAB_SIZE)
+
     if ENCODER_VOCAB_SIZE:
-        description_values_count = ENCODER_VOCAB_SIZE + 3
+        description_values_count = ENCODER_VOCAB_SIZE + 4
     else:
-        description_values_count = len(description_chars) + 2
+        description_values_count = len(description_chars) + 3
     if DECODER_VOCAB_SIZE:
-        script_values_count = DECODER_VOCAB_SIZE + 3
+        script_values_count = DECODER_VOCAB_SIZE + 4
     else:
-        script_values_count = len(script_chars) + 2
+        script_values_count = len(script_chars) + 3
 
     tf.reset_default_graph()
     tf.set_random_seed(1)
@@ -293,20 +338,10 @@ def main():
                         input_batches[i], input_batch_lengths[i], 
                         target_batches[i], target_batch_lengths[i])
                     print("Epoch", epoch, ": training on batch", i)
-                    _, loss = session.run([model.train_op, model.loss], feed_dict)
+                    _, loss, logits = session.run(
+                        [model.train_op, model.loss, model.decoder_logits_train], 
+                        feed_dict)
                     print("Loss:", loss, "\n")
-                    if isnan(loss):
-                        np.set_printoptions(threshold=np.inf)
-                        with open("log_file.txt", "w") as log_file:
-                            print("Loss", prev_loss, file=log_file)
-                            print(prev_feed_dict, file=log_file)
-                            print("\n", file=log_file)
-                            print("Loss", loss, file=log_file)
-                            print(feed_dict, file=log_file)
-                        raise KeyboardInterrupt
-                    else:
-                        prev_feed_dict = feed_dict
-                        prev_loss = loss
                     loss_track.append(loss)
         except KeyboardInterrupt:
             print("Training interrupted!")
@@ -314,6 +349,9 @@ def main():
             print("Training completed!")
 
         plotter.plot(loss_track)
+        average_loss_track = [sum(loss_track[:i+1])/(i+1)
+                              for i in range(len(loss_track))]
+        plotter.plot(average_loss_track)
         plotter.show()
         print("Final loss:", loss_track[-1])
 
