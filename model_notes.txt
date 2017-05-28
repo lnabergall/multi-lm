@@ -1,8 +1,14 @@
-Notes:
-- use masking + bucketing for batches to do truncated backprop
+Current Notes:
+- Generate sample output
+- Try copy task on sequences with same distribution as descriptions or code and use the same truncated backprop method
+- Setup Tensorboard
+- Start simplifications (e.g. training on only a few description2code examples)
+
+Older Notes:
+- use masking + bucketing for batches to do truncated backpropseq
 
 Current Simplifications:
-- No duplicated thought vector?
+- No duplicated thought vector
 - Limited data set
 - Single layer
 - No bidirectional layers
