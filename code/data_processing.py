@@ -366,8 +366,8 @@ def vectorize_data(processed_data_dict, desc_char_counts, python_char_counts,
 
     if dense:
         # Change from batch-major to time-major
-        description_array = description_array.swapaxes(0, 1)
-        python_solution_array = python_solution_array.swapaxes(0, 1)
+        # description_array = description_array.swapaxes(0, 1)
+        # python_solution_array = python_solution_array.swapaxes(0, 1)
         return (description_array, python_solution_array, 
                 desc_sequence_lengths, python_sequence_lengths)
     else:

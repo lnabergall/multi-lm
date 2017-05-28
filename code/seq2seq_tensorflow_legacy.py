@@ -4,6 +4,7 @@ using tf.contrib.seq2seq from tensorflow 1.0.
 """
 
 from math import sqrt, isnan
+from time import time
 
 import numpy as np
 import matplotlib.pyplot as plotter
@@ -26,7 +27,7 @@ HIDDEN_DIM = 64
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 128
-EPOCHS = 50
+EPOCHS = 2
 
 
 class Seq2SeqModel():
@@ -35,7 +36,9 @@ class Seq2SeqModel():
     EOS = 1
 
     def __init__(self, encoder_cell, decoder_cell, encoder_vocab_size, 
-                 decoder_vocab_size, encoder_embedding_size, decoder_embedding_size, 
+                 decoder_vocab_size, encoder_embedding_size, decoder_embedding_size,
+                 encoder_inputs_shape, encoder_inputs_length_shape,
+                 decoder_targets_shape, decoder_targets_length_shape, 
                  bidirectional=False, attention=False):
         self.encoder_cell = encoder_cell
         self.decoder_cell = decoder_cell
@@ -44,6 +47,11 @@ class Seq2SeqModel():
         self.decoder_vocab_size = decoder_vocab_size
         self.encoder_embedding_size = encoder_embedding_size
         self.decoder_embedding_size = decoder_embedding_size
+
+        self.encoder_inputs_shape = encoder_inputs_shape
+        self.encoder_inputs_length_shape = encoder_inputs_length_shape
+        self.decoder_targets_shape = decoder_targets_shape
+        self.decoder_targets_length_shape = decoder_targets_length_shape
 
         self.bidirectional = bidirectional
         self.attention = attention
@@ -68,17 +76,43 @@ class Seq2SeqModel():
         self._init_optimizer()
 
     def _init_placeholders(self):
-        """Everything is time-major."""
-        self.encoder_inputs = tf.placeholder(
-            shape=(None, None), dtype=tf.int32, name="encoder_inputs")
-        self.encoder_inputs_length = tf.placeholder(
-            shape=(None,), dtype=tf.int32, name="encoder_inputs_length")
+        # Inputs are batch-major
+        self.inputs_initializer = tf.placeholder(
+            shape=self.encoder_inputs_shape, 
+            dtype=tf.int32, name="inputs_initializer")
+        self.inputs_length_initializer = tf.placeholder(
+            shape=self.encoder_inputs_length_shape, 
+            dtype=tf.int32, name="inputs_length_initializer")
 
         # required for training, not for testing
-        self.decoder_targets = tf.placeholder(
-            shape=(None, None), dtype=tf.int32, name="decoder_targets")
-        self.decoder_targets_length = tf.placeholder(
-            shape=(None,), dtype=tf.int32, name="decoder_targets_length")
+        self.targets_initializer = tf.placeholder(
+            shape=self.decoder_targets_shape, 
+            dtype=tf.int32, name="targets_initializer")
+        self.targets_length_initializer = tf.placeholder(
+            shape=self.decoder_targets_length_shape, 
+            dtype=tf.int32, name="targets_length_initializer")
+
+        self.inputs = tf.Variable(
+            self.inputs_initializer, trainable=False, collections=[])
+        self.inputs_length = tf.Variable(
+            self.inputs_length_initializer, trainable=False, collections=[])
+
+        self.targets = tf.Variable(
+            self.targets_initializer, trainable=False, collections=[])
+        self.targets_length = tf.Variable(
+            self.targets_length_initializer, trainable=False, collections=[])
+
+        input_, input_length, target, target_length = tf.train.slice_input_producer(
+            [self.inputs, self.inputs_length, self.targets, self.targets_length], 
+            num_epochs=EPOCHS)
+        (self.encoder_inputs, self.encoder_inputs_length, 
+         self.decoder_targets, self.decoder_targets_length) = tf.train.batch(
+            [input_, input_length, target, target_length], 
+            batch_size=BATCH_SIZE, num_threads=1)
+
+        # Switch to time-major
+        self.encoder_inputs = tf.transpose(self.encoder_inputs, [1, 0])
+        self.decoder_targets = tf.transpose(self.decoder_targets, [1, 0])
 
     def _init_decoder_train_connectors(self):
         with tf.name_scope("DecoderTrainFeeds"):
@@ -166,7 +200,8 @@ class Seq2SeqModel():
                 return tf.contrib.layers.linear(
                     outputs, self.decoder_vocab_size, scope=scope)
 
-            decoder_fn_train = simple_decoder_fn_train(encoder_state=self.encoder_state)
+            decoder_fn_train = simple_decoder_fn_train(
+                encoder_state=self.encoder_state)
 
             if self.attention:
                 pass    # To implement...
@@ -204,6 +239,17 @@ class Seq2SeqModel():
         self.loss = sequence_loss(logits=logits, targets=targets,
                                   weights=self.loss_weights)
         self.train_op = tf.train.RMSPropOptimizer(LEARNING_RATE).minimize(self.loss)
+
+    def initialize_train_inputs(self, session, inputs, inputs_length, 
+                                targets, targets_length):
+        session.run(self.inputs.initializer, 
+            feed_dict={self.inputs_initializer: inputs})
+        session.run(self.inputs_length.initializer, 
+            feed_dict={self.inputs_length_initializer: inputs_length})
+        session.run(self.targets.initializer, 
+            feed_dict={self.targets_initializer: targets})
+        session.run(self.targets_length.initializer, 
+            feed_dict={self.targets_length_initializer: targets_length})
 
     def make_train_inputs(self, inputs_, inputs_length_, 
                           targets_, targets_length_):
@@ -270,7 +316,7 @@ def train_on_copy_task(session, model,
                     print()
     except KeyboardInterrupt:
         print('training interrupted')
-        
+
     return loss_track
 
 
@@ -310,43 +356,39 @@ def main():
                              decoder_vocab_size=script_values_count,
                              encoder_embedding_size=description_values_count,
                              decoder_embedding_size=script_values_count,
+                             encoder_inputs_shape=train_inputs.shape,
+                             encoder_inputs_length_shape=(len(train_input_lengths),),
+                             decoder_targets_shape=train_targets.shape,
+                             decoder_targets_length_shape=(len(train_target_lengths),),
                              attention=False,
                              bidirectional=False)
         session.run(tf.global_variables_initializer())
+        session.run(tf.local_variables_initializer())
+        model.initialize_train_inputs(session, train_inputs, train_input_lengths, 
+                                      train_targets, train_target_lengths)
+        coordinator = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(sess=session, coord=coordinator)
         loss_track = []
         try:
-            for epoch in range(EPOCHS):
-                randomize_insync(train_inputs, train_targets, 
-                                 train_input_lengths, train_target_lengths)
-                print("\nBatching data...")
-                input_batches = []
-                target_batches = []
-                input_batch_lengths = []
-                target_batch_lengths = []
-                batch_count = (train_inputs.shape[1]+BATCH_SIZE-1) // BATCH_SIZE
-                for i in range(batch_count):
-                    input_batches.append(train_inputs[
-                        :,i*BATCH_SIZE:(i+1)*BATCH_SIZE])
-                    target_batches.append(train_targets[
-                        :,i*BATCH_SIZE:(i+1)*BATCH_SIZE])
-                    input_batch_lengths.append(train_input_lengths[
-                        i*BATCH_SIZE:(i+1)*BATCH_SIZE])
-                    target_batch_lengths.append(train_target_lengths[
-                        i*BATCH_SIZE:(i+1)*BATCH_SIZE])
-                for i in range(batch_count):
-                    feed_dict = model.make_train_inputs(
-                        input_batches[i], input_batch_lengths[i], 
-                        target_batches[i], target_batch_lengths[i])
-                    print("Epoch", epoch, ": training on batch", i)
-                    _, loss, logits = session.run(
-                        [model.train_op, model.loss, model.decoder_logits_train], 
-                        feed_dict)
-                    print("Loss:", loss, "\n")
-                    loss_track.append(loss)
+            batch = 0
+            while not coordinator.should_stop():
+                start_time = time()
+                _, loss = session.run([model.train_op, model.loss])
+                duration = time() - start_time
+                if batch % 100 == 0:
+                    print("Batch:", batch, ", loss:", loss, ", duration:", duration)
+                loss_track.append(loss)
+                batch += 1
         except KeyboardInterrupt:
             print("Training interrupted!")
-        else:
+            coordinator.request_stop()
+        except tf.errors.OutOfRangeError:
             print("Training completed!")
+            coordinator.request_stop()
+        except Exception as e:
+            coordinator.request_stop(e)
+
+        coordinator.join(threads)
 
         plotter.plot(loss_track)
         average_loss_track = [sum(loss_track[:i+1])/(i+1)
