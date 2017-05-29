@@ -201,8 +201,8 @@ def process_data(data_dict):
     return processed_data_dict
 
 
-def generate_char_labels(desc_char_counts, python_char_counts, dense,
-                         description_vocab_size, python_vocab_size):
+def generate_char_labels(desc_char_counts, python_char_counts, dense=True,
+                         description_vocab_size=0, python_vocab_size=0):
     desc_chars, python_chars = list(desc_char_counts), list(python_char_counts)
     desc_chars.sort(key=lambda char: desc_char_counts[char], reverse=True)
     python_chars.sort(key=lambda char: python_char_counts[char], reverse=True)
@@ -224,28 +224,58 @@ def generate_char_labels(desc_char_counts, python_char_counts, dense,
     return desc_char_values, python_char_values
 
 
-def vectorize_example(description, python_solution, desc_chars, 
-                      python_chars, as_collection=False):
-    desc_char_values = {char: i for i, char in enumerate(desc_chars)}
-    python_char_values = {char: i for i, char in enumerate(python_chars)}
-    if as_collection:
-        description_array = np.zeros(
-            (1, len(description), len(desc_chars)), dtype=np.bool)
-        python_solution_array = np.zeros(
-            (1, MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
+def devectorize(vector, data_type, desc_char_counts, python_char_counts):
+    desc_char_values, python_char_values = generate_char_labels(
+        desc_char_counts, python_char_counts)
+    desc_value_chars = {i: char for char, i in desc_char_values.items()}
+    python_value_chars = {i: char for char, i in python_char_values.items()}
+
+    text = ""
+    if data_type == "description":
+        for i in range(vector.size):
+            if vector[i] == 0:
+                text += "\n"
+            elif vector[i] == 1:
+                text += "<eos>"
+            else:
+                text += desc_value_chars[vector[i]]
+    elif data_type == "script":
+        for i in range(vector.size):
+            if vector[i] == 0:
+                text += "\n"
+            elif vector[i] == 1:
+                text += "<eos>"
+            else:
+                text += python_value_chars[vector[i]]
+    else:
+        raise ValueError("Cannot interpret this data type: " + data_type)
+
+    return text
+
+
+def vectorize_example(description, python_solution, desc_char_counts, 
+                      python_char_counts, dense=True, description_vocab_size=0,
+                      python_vocab_size=0):
+    desc_char_values, python_char_values = generate_char_labels(
+        desc_char_counts, python_char_counts, dense, 
+        description_vocab_size, python_vocab_size)
+    if dense:
+        description_array = np.zeros((1, len(description)), dtype=np.bool)
+        python_solution_array = np.zeros((1, len(python_solution)), dtype=np.bool)
     else:
         description_array = np.zeros(
             (len(description), len(desc_chars)), dtype=np.bool)
         python_solution_array = np.zeros(
             (MAX_SCRIPT_LENGTH, len(python_chars)), dtype=np.bool)
+
     for i, char in enumerate(description):
-        if as_collection:
-            description_array[0, i, desc_char_values[char]] = 1
+        if dense:
+            description_array[0, i] = desc_char_values[char]
         else:
             description_array[i, desc_char_values[char]] = 1
     for i, char in enumerate(python_solution):
-        if as_collection:
-            python_solution_array[0, i, python_char_values[char]] = 1
+        if dense:
+            python_solution_array[0, i] = python_char_values[char]
         else:
             python_solution_array[i, python_char_values[char]] = 1
 
@@ -258,6 +288,8 @@ def vectorize_data(processed_data_dict, desc_char_counts, python_char_counts,
     desc_char_values, python_char_values = generate_char_labels(
         desc_char_counts, python_char_counts, dense, 
         description_vocab_size, python_vocab_size)
+    desc_chars = list(desc_char_values)
+    python_chars = list(python_char_values)
     print(desc_char_values)
     print(python_char_values)
 

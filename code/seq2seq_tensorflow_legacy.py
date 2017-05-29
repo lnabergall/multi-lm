@@ -27,7 +27,7 @@ HIDDEN_DIM = 64
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 128
-EPOCHS = 2
+EPOCHS = 50
 
 
 class Seq2SeqModel():
@@ -108,7 +108,7 @@ class Seq2SeqModel():
         (self.encoder_inputs, self.encoder_inputs_length, 
          self.decoder_targets, self.decoder_targets_length) = tf.train.batch(
             [input_, input_length, target, target_length], 
-            batch_size=BATCH_SIZE, num_threads=1)
+            batch_size=BATCH_SIZE, num_threads=8)
 
         # Switch to time-major
         self.encoder_inputs = tf.transpose(self.encoder_inputs, [1, 0])
@@ -334,7 +334,7 @@ def main():
     train_inputs, train_targets, train_input_lengths, train_target_lengths \
         = dp.vectorize_data(training_data_dict, description_chars, 
                             script_chars, backprop_timesteps=BACKPROP_TIMESTEPS,
-                            dense=True, description_vocab_size=ENCODER_VOCAB_SIZE, 
+                            description_vocab_size=ENCODER_VOCAB_SIZE, 
                             python_vocab_size=DECODER_VOCAB_SIZE)
 
     if ENCODER_VOCAB_SIZE:
@@ -373,10 +373,21 @@ def main():
             batch = 0
             while not coordinator.should_stop():
                 start_time = time()
-                _, loss = session.run([model.train_op, model.loss])
+                if batch % 500 != 0:
+                    _, loss = session.run([model.train_op, model.loss])
+                else:
+                    _, loss, prediction = session.run([
+                        model.train_op, model.loss, model.decoder_prediction_inference])
                 duration = time() - start_time
                 if batch % 100 == 0:
-                    print("Batch:", batch, ", loss:", loss, ", duration:", duration)
+                    print("batch:", batch, "-- loss:", loss, "-- duration:", duration)
+                    if batch % 500 == 0:
+                        print("\nGenerated script:")
+                        generated_script = dp.devectorize(
+                            prediction[:,0], "script", description_chars, script_chars)
+                        print(generated_script)
+                        print("Length:", len(generated_script))
+                        print("Vector:", prediction[:,0])
                 loss_track.append(loss)
                 batch += 1
         except KeyboardInterrupt:
