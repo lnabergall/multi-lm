@@ -3,6 +3,7 @@ Sequence-to-sequence model implemented
 using tf.contrib.seq2seq from tensorflow 1.0.
 """
 
+import os
 from math import sqrt, isnan
 from time import time
 
@@ -17,8 +18,10 @@ from tensorflow.contrib.seq2seq import (dynamic_rnn_decoder, simple_decoder_fn_t
 import data_processing as dp
 from data_processing import (PAD_VALUE, MAX_DESCRIPTION_LENGTH, 
                              MAX_SCRIPT_LENGTH)
-import helpers
+import data_processing_copy_task as dp_copy
 
+
+COPY_TASK = False
 
 # Hyperparameters
 ENCODER_VOCAB_SIZE = 0
@@ -27,7 +30,9 @@ HIDDEN_DIM = 64
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 128
-EPOCHS = 50
+EPOCHS = 1
+
+MODEL_DIR = os.path.join(os.pardir, "models")
 
 
 class Seq2SeqModel():
@@ -102,13 +107,14 @@ class Seq2SeqModel():
         self.targets_length = tf.Variable(
             self.targets_length_initializer, trainable=False, collections=[])
 
-        input_, input_length, target, target_length = tf.train.slice_input_producer(
-            [self.inputs, self.inputs_length, self.targets, self.targets_length], 
-            num_epochs=EPOCHS)
+        # input_, input_length, target, target_length = tf.train.slice_input_producer(
+        #     [self.inputs, self.inputs_length, self.targets, self.targets_length], 
+        #     num_epochs=EPOCHS, capacity=5000)
         (self.encoder_inputs, self.encoder_inputs_length, 
          self.decoder_targets, self.decoder_targets_length) = tf.train.batch(
-            [input_, input_length, target, target_length], 
-            batch_size=BATCH_SIZE, num_threads=8)
+           [self.inputs, self.inputs_length, self.targets, self.targets_length], 
+            batch_size=BATCH_SIZE, num_threads=8, 
+            capacity=self.encoder_inputs_shape[0], enqueue_many=True)
 
         # Switch to time-major
         self.encoder_inputs = tf.transpose(self.encoder_inputs, [1, 0])
@@ -243,13 +249,13 @@ class Seq2SeqModel():
     def initialize_train_inputs(self, session, inputs, inputs_length, 
                                 targets, targets_length):
         session.run(self.inputs.initializer, 
-            feed_dict={self.inputs_initializer: inputs})
+                    feed_dict={self.inputs_initializer: inputs})
         session.run(self.inputs_length.initializer, 
-            feed_dict={self.inputs_length_initializer: inputs_length})
+                    feed_dict={self.inputs_length_initializer: inputs_length})
         session.run(self.targets.initializer, 
-            feed_dict={self.targets_initializer: targets})
+                    feed_dict={self.targets_initializer: targets})
         session.run(self.targets_length.initializer, 
-            feed_dict={self.targets_length_initializer: targets_length})
+                    feed_dict={self.targets_length_initializer: targets_length})
 
     def make_train_inputs(self, inputs_, inputs_length_, 
                           targets_, targets_length_):
@@ -277,95 +283,139 @@ def randomize_insync(*args):
         np.random.set_state(state)
 
 
-def train_on_copy_task(session, model,
-                       length_from=3, length_to=8,
-                       vocab_lower=2, vocab_upper=10,
-                       batch_size=100,
-                       max_batches=5000,
-                       batches_in_epoch=1000,
-                       verbose=True):
+def plot_loss(loss_track):
+    plotter.plot(loss_track)
+    average_loss_track = [sum(loss_track[3*(i+1)//4 : i+1])/((i+4)//4)
+                          for i in range(len(loss_track))]
+    plotter.plot(average_loss_track)
+    plotter.show()
 
-    batches = helpers.random_sequences(
-        length_from=length_from, length_to=length_to, vocab_lower=vocab_lower, 
-        vocab_upper=vocab_upper, batch_size=batch_size)
+
+def train_on_copy_task(session, length_from=3, length_to=8,
+                       vocab_lower=2, vocab_upper=10,
+                       batch_size=128, batches=2000,
+                       verbose=True):
+    print("\nFetching data...")
+    sequences = dp_copy.random_sequences(length_from, length_to, vocab_lower, 
+                                         vocab_upper, batch_size, batches)
+    print("\nVectorizing data...")
+    train_inputs, train_input_lengths = dp_copy.vectorize(sequences)
+    print("\nCreating model...")
+    model = Seq2SeqModel(encoder_cell=LSTMCell(HIDDEN_DIM),
+                         decoder_cell=LSTMCell(HIDDEN_DIM),
+                         encoder_vocab_size=vocab_upper-vocab_lower+2,
+                         decoder_vocab_size=vocab_upper-vocab_lower+2,
+                         encoder_embedding_size=vocab_upper-vocab_lower+2,
+                         decoder_embedding_size=vocab_upper-vocab_lower+2,
+                         encoder_inputs_shape=train_inputs.shape,
+                         encoder_inputs_length_shape=(len(train_input_lengths),),
+                         decoder_targets_shape=train_inputs.shape,
+                         decoder_targets_length_shape=(len(train_input_lengths),),
+                         attention=False,
+                         bidirectional=False)
+    summary_op = tf.summary.merge_all()
+    saver = tf.train.Saver()
+    session.run(tf.global_variables_initializer())
+    session.run(tf.local_variables_initializer())
+    model.initialize_train_inputs(session, train_inputs, train_input_lengths, 
+                                  train_inputs, train_input_lengths)
+    summary_writer = tf.summary.FileWriter(MODEL_DIR, session.graph)
+    coordinator = tf.train.Coordinator()
+    threads = tf.train.start_queue_runners(sess=session, coord=coordinator)
     loss_track = []
-    fd = {}
-    l = 5
     try:
-        for batch in range(max_batches+1):
-            prev_fd = fd
-            prev_l = l
-            batch_data = next(batches)
-            inputs, input_lengths = helpers.batch(batch_data)
-            fd = model.make_train_inputs(inputs, input_lengths, inputs, input_lengths)
-            _, l = session.run([model.train_op, model.loss], fd)
-            loss_track.append(l)
+        batch = 0
+        while not coordinator.should_stop():
+            start_time = time()
+            if batch % 500 != 0:
+                _, loss = session.run([model.train_op, model.loss])
+            else:
+                _, loss, inputs, prediction = session.run([
+                    model.train_op, model.loss, 
+                    model.encoder_inputs, model.decoder_prediction_inference])
+            duration = time() - start_time
             if verbose:
-                if batch == 0 or batch % batches_in_epoch == 0:
-                    print('batch {}'.format(batch))
-                    print('  minibatch loss: {}'.format(session.run(model.loss, fd)))
-                    for i, (e_in, dt_pred) in enumerate(zip(
-                            fd[model.encoder_inputs].T,
-                            session.run(model.decoder_prediction_train, fd).T
-                        )):
-                        print('  sample {}:'.format(i + 1))
-                        print('    enc input           > {}'.format(e_in))
-                        print('    dec train predicted > {}'.format(dt_pred))
-                        if i >= 2:
-                            break
-                    print()
+                if batch % 100 == 0:
+                    print("batch:", batch, "-- loss:", loss, "-- duration:", duration)
+                    summary_string = session.run(summary_op)
+                    summary_writer.add_summary(summary_string, batch)
+                    if batch % 500 == 0:
+                        for i in range(2):
+                            if batch != batches:
+                                print("\nInput: ", inputs[:,i])
+                                print("Output:", prediction[:,i])
+            loss_track.append(loss)
+            batch += 1
     except KeyboardInterrupt:
-        print('training interrupted')
+        print("Training interrupted!")
+    except tf.errors.OutOfRangeError:
+        print("Training completed!")
+    finally:
+        saver.save(session, os.path.join(MODEL_DIR, "copy_task"), 
+                   global_step=batch)
+        coordinator.request_stop()
+
+    coordinator.join(threads)
 
     return loss_track
 
 
 def main():
-    print("\nFetching data...")
-    data = dp.get_data()
-    print("\nProcessing data...")
-    processed_data = dp.process_data(data)
-    description_chars = processed_data["description_char_counts"]
-    script_chars = processed_data["python_char_counts"]
-    training_data_dict = processed_data["training_data"]
-    validation_data_dict = processed_data["validation_data"]
-    test_data_dict = processed_data["test_data"]
-    print("\nVectorizing data...")
-    train_inputs, train_targets, train_input_lengths, train_target_lengths \
-        = dp.vectorize_data(training_data_dict, description_chars, 
-                            script_chars, backprop_timesteps=BACKPROP_TIMESTEPS,
-                            description_vocab_size=ENCODER_VOCAB_SIZE, 
-                            python_vocab_size=DECODER_VOCAB_SIZE)
+    if not COPY_TASK:
+        print("\nFetching data...")
+        data = dp.get_data()
+        print("\nProcessing data...")
+        processed_data = dp.process_data(data)
+        description_chars = processed_data["description_char_counts"]
+        script_chars = processed_data["python_char_counts"]
+        training_data_dict = processed_data["training_data"]
+        validation_data_dict = processed_data["validation_data"]
+        test_data_dict = processed_data["test_data"]
+        print("\nVectorizing data...")
+        train_inputs, train_targets, train_input_lengths, train_target_lengths \
+            = dp.vectorize_data(training_data_dict, description_chars, 
+                                script_chars, backprop_timesteps=BACKPROP_TIMESTEPS,
+                                description_vocab_size=ENCODER_VOCAB_SIZE, 
+                                python_vocab_size=DECODER_VOCAB_SIZE)
 
-    if ENCODER_VOCAB_SIZE:
-        description_values_count = ENCODER_VOCAB_SIZE + 4
-    else:
-        description_values_count = len(description_chars) + 3
-    if DECODER_VOCAB_SIZE:
-        script_values_count = DECODER_VOCAB_SIZE + 4
-    else:
-        script_values_count = len(script_chars) + 3
+        if ENCODER_VOCAB_SIZE:
+            description_values_count = ENCODER_VOCAB_SIZE + 4
+        else:
+            description_values_count = len(description_chars) + 3
+        if DECODER_VOCAB_SIZE:
+            script_values_count = DECODER_VOCAB_SIZE + 4
+        else:
+            script_values_count = len(script_chars) + 3
 
     tf.reset_default_graph()
     tf.set_random_seed(1)
     with tf.Session() as session:
-        print("\nCreating model...")
-        model = Seq2SeqModel(encoder_cell=LSTMCell(HIDDEN_DIM),
-                             decoder_cell=LSTMCell(HIDDEN_DIM),
-                             encoder_vocab_size=description_values_count,
-                             decoder_vocab_size=script_values_count,
-                             encoder_embedding_size=description_values_count,
-                             decoder_embedding_size=script_values_count,
-                             encoder_inputs_shape=train_inputs.shape,
-                             encoder_inputs_length_shape=(len(train_input_lengths),),
-                             decoder_targets_shape=train_targets.shape,
-                             decoder_targets_length_shape=(len(train_target_lengths),),
-                             attention=False,
-                             bidirectional=False)
+        if COPY_TASK:
+            plot_loss(train_on_copy_task(session, length_from=3, length_to=8,
+                                         vocab_lower=2, vocab_upper=10,
+                                         batch_size=BATCH_SIZE))
+            return
+        else:
+            print("\nCreating model...")
+            model = Seq2SeqModel(encoder_cell=LSTMCell(HIDDEN_DIM),
+                                 decoder_cell=LSTMCell(HIDDEN_DIM),
+                                 encoder_vocab_size=description_values_count,
+                                 decoder_vocab_size=script_values_count,
+                                 encoder_embedding_size=description_values_count,
+                                 decoder_embedding_size=script_values_count,
+                                 encoder_inputs_shape=train_inputs.shape,
+                                 encoder_inputs_length_shape=(len(train_input_lengths),),
+                                 decoder_targets_shape=train_targets.shape,
+                                 decoder_targets_length_shape=(len(train_target_lengths),),
+                                 attention=False,
+                                 bidirectional=False)
+        summary_op = tf.summary.merge_all()
+        saver = tf.train.Saver()
         session.run(tf.global_variables_initializer())
         session.run(tf.local_variables_initializer())
         model.initialize_train_inputs(session, train_inputs, train_input_lengths, 
                                       train_targets, train_target_lengths)
+        summary_writer = tf.summary.FileWriter(MODEL_DIR, session.graph)
         coordinator = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(sess=session, coord=coordinator)
         loss_track = []
@@ -381,6 +431,8 @@ def main():
                 duration = time() - start_time
                 if batch % 100 == 0:
                     print("batch:", batch, "-- loss:", loss, "-- duration:", duration)
+                    summary_string = session.run(summary_op)
+                    summary_writer.add_summary(summary_string, batch)
                     if batch % 500 == 0:
                         print("\nGenerated script:")
                         generated_script = dp.devectorize(
@@ -392,20 +444,16 @@ def main():
                 batch += 1
         except KeyboardInterrupt:
             print("Training interrupted!")
-            coordinator.request_stop()
         except tf.errors.OutOfRangeError:
             print("Training completed!")
+        finally:
+            saver.save(session, os.path.join(MODEL_DIR, "desc2code_task"), 
+                       global_step=batch)
             coordinator.request_stop()
-        except Exception as e:
-            coordinator.request_stop(e)
 
         coordinator.join(threads)
 
-        plotter.plot(loss_track)
-        average_loss_track = [sum(loss_track[:i+1])/(i+1)
-                              for i in range(len(loss_track))]
-        plotter.plot(average_loss_track)
-        plotter.show()
+        plot_loss(loss_track)
         print("Final loss:", loss_track[-1])
 
 
