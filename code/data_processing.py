@@ -16,7 +16,7 @@ if not os.path.exists(BASE_DIR):
 PAD_CHARACTER = "\n"
 PAD_VALUE = 0
 MAX_DESCRIPTION_LENGTH = 4244
-MAX_SCRIPT_LENGTH = 2000
+MAX_SCRIPT_LENGTH = 1500
 
 
 def get_data():
@@ -280,6 +280,43 @@ def vectorize_example(description, python_solution, desc_char_counts,
             python_solution_array[i, python_char_values[char]] = 1
 
     return description_array, python_solution_array
+
+
+def make_batches(description_arrays, script_arrays, batch_size):
+    description_batches = []
+    script_batches = []
+    description_batches_lengths = []
+    script_batches_lengths = []
+    for i in range(len(script_arrays)//batch_size + 1):
+        description_batches_lengths.append([])
+        script_batches_lengths.append([])
+        descriptions = description_arrays[i*batch_size:(i+1)*batch_size]
+        scripts = script_arrays[i*batch_size:(i+1)*batch_size]
+        max_desc_length = max(desc.shape[1] for desc in descriptions)
+        max_script_length = max(script.shape[1] for script in scripts)
+        if i != len(script_arrays)//batch_size:
+            # Time-major arrays
+            description_batch = np.zeros(
+                (max_desc_length, batch_size), dtype=np.int8)
+            script_batch = np.zeros(
+                (max_script_length, batch_size), dtype=np.int8)
+        else:
+            description_batch = np.zeros(
+                (max_desc_length, len(script_arrays) % batch_size), dtype=np.int8)
+            script_batch = np.zeros(
+                (max_script_length, len(script_arrays) % batch_size), dtype=np.int8)
+        for j, (desc, script) in enumerate(zip(descriptions, scripts)):
+            description_batches_lengths[-1].append(desc.shape[1])
+            script_batches_lengths[-1].append(script.shape[1])
+            for k in range(desc.shape[1]):
+                description_batch[k, j] = desc[0, k]
+            for k in range(script.shape[1]):
+                script_batch[k, j] = script[0, k]
+        description_batches.append(description_batch)
+        script_batches.append(script_batch)
+
+    return (description_batches, script_batches, 
+            description_batches_lengths, script_batches_lengths)
 
 
 def vectorize_data(processed_data_dict, desc_char_counts, python_char_counts, 
