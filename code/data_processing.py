@@ -260,8 +260,8 @@ def vectorize_example(description, python_solution, desc_char_counts,
         desc_char_counts, python_char_counts, dense, 
         description_vocab_size, python_vocab_size)
     if dense:
-        description_array = np.zeros((1, len(description)), dtype=np.bool)
-        python_solution_array = np.zeros((1, len(python_solution)), dtype=np.bool)
+        description_array = np.zeros((1, len(description)), dtype=np.int8)
+        python_solution_array = np.zeros((1, len(python_solution)), dtype=np.int8)
     else:
         description_array = np.zeros(
             (len(description), len(desc_chars)), dtype=np.bool)
@@ -280,6 +280,42 @@ def vectorize_example(description, python_solution, desc_char_counts,
             python_solution_array[i, python_char_values[char]] = 1
 
     return description_array, python_solution_array
+
+
+def vectorize_examples(processed_data_dict, desc_char_counts, 
+                       python_char_counts, dense=True, 
+                       description_vocab_size=0, python_vocab_size=0):
+    description_arrays = []
+    script_arrays = []
+    for description in processed_data_dict:
+        for script in processed_data_dict[description]["python"]:
+            description_array, script_array = vectorize_example(
+                description, script, desc_char_counts, python_char_counts,
+                description_vocab_size=description_vocab_size, 
+                python_vocab_size=python_vocab_size)
+            description_arrays.append(description_array)
+            script_arrays.append(script_array)
+
+    return description_arrays, script_arrays
+
+
+def merge_arrays(description_arrays, script_arrays):
+    if len(description_arrays) != len(script_arrays):
+        raise ValueError("Unexpected sequence lengths!")
+    max_desc_length = max(array.shape[1] for array in description_arrays)
+    max_script_length = max(array.shape[1] for array in script_arrays)
+    merged_description_array = np.zeros(
+        (max_desc_length, len(description_arrays)), dtype=np.int8)
+    merged_script_array = np.zeros(
+        (max_script_length, len(script_arrays)), dtype=np.int8)
+    for i, (desc_array, script_array) in enumerate(
+            zip(description_arrays, script_arrays)):
+        for j in range(desc_array.shape[1]):
+            merged_description_array[j, i] = desc_array[j]
+        for j in range(script_array.shape[1]):
+            merged_script_array[j, i] = script_array[j]
+
+    return merged_description_array, merged_script_array
 
 
 def make_batches(description_arrays, script_arrays, batch_size):
