@@ -31,7 +31,7 @@ HIDDEN_DIM = 64
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 32
-EPOCHS = 5
+EPOCHS = 50
 
 MODEL_DIR = os.path.join(os.pardir, "models")
 
@@ -299,6 +299,23 @@ def plot_loss(loss_track):
     plotter.show()
 
 
+def get_vocab_sizes(description_chars, script_chars, encoder_vocab_size, 
+                    decoder_vocab_size, feed_dict=True):
+    if encoder_vocab_size:
+        description_values_count = encoder_vocab_size + 4
+    else:
+        description_values_count = len(description_chars) + 3
+        if feed_dict:
+            description_values_count = len(description_chars) + 2
+    if decoder_vocab_size:
+        script_values_count = decoder_vocab_size + 4
+    else:
+        script_values_count = len(script_chars) + 3
+        if feed_dict:
+            script_values_count = len(script_chars) + 2
+
+    return description_values_count, script_values_count
+
 def train_on_copy_task(session, length_from=3, length_to=8,
                        vocab_lower=2, vocab_upper=10,
                        batch_size=128, batches=2000,
@@ -373,16 +390,10 @@ def train_on_desc2code_task(session, training_data, description_chars,
                             script_chars, feed_dict):
     print("\nVectorizing data...")
     if feed_dict:
-        description_arrays = []
-        script_arrays = []
-        for description in training_data:
-            for script in training_data[description]["python"]:
-                description_array, script_array = dp.vectorize_example(
-                    description, script, description_chars, script_chars,
-                    description_vocab_size=ENCODER_VOCAB_SIZE, 
-                    python_vocab_size=DECODER_VOCAB_SIZE)
-                description_arrays.append(description_array)
-                script_arrays.append(script_array)
+        description_arrays, script_arrays = dp.vectorize_examples(
+            training_data, description_chars, script_chars,
+            description_vocab_size=ENCODER_VOCAB_SIZE, 
+            python_vocab_size=DECODER_VOCAB_SIZE)
     else:
         train_inputs, train_targets, train_input_lengths, train_target_lengths \
             = dp.vectorize_data(training_data, description_chars, script_chars, 
@@ -390,18 +401,9 @@ def train_on_desc2code_task(session, training_data, description_chars,
                                 description_vocab_size=ENCODER_VOCAB_SIZE, 
                                 python_vocab_size=DECODER_VOCAB_SIZE)
 
-    if ENCODER_VOCAB_SIZE:
-        description_values_count = ENCODER_VOCAB_SIZE + 4
-    else:
-        description_values_count = len(description_chars) + 3
-        if feed_dict:
-            description_values_count = len(description_chars) + 2
-    if DECODER_VOCAB_SIZE:
-        script_values_count = DECODER_VOCAB_SIZE + 4
-    else:
-        script_values_count = len(script_chars) + 3
-        if feed_dict:
-            script_values_count = len(script_chars) + 2
+    description_values_count, script_values_count = get_vocab_sizes(
+        description_chars, script_chars, ENCODER_VOCAB_SIZE, 
+        ENCODER_VOCAB_SIZE, feed_dict)
 
     print("\nCreating model...")
     if feed_dict:
@@ -452,25 +454,38 @@ def train_on_desc2code_task(session, training_data, description_chars,
                     feed_dict = model.make_train_inputs(
                         train_inputs[batch], train_input_lengths[batch], 
                         train_targets[batch], train_target_lengths[batch])
-                    if batch % 10 == 0:
-                        _, loss, prediction = session.run(
+                    if step % 10 == 0:
+                        _, loss, prediction_train, prediction_inference = session.run(
                             [model.train_op, model.loss, 
+                             model.decoder_prediction_train,
                              model.decoder_prediction_inference], feed_dict)
                     else:
                         _, loss = session.run(
                             [model.train_op, model.loss], feed_dict)
                     duration  = time() - start_time
-                    if batch % 3 == 0:
+                    if step % 3 == 0:
                         print("\nepoch:", epoch, "-- batch:", batch, "-- loss:", loss, 
                               "-- duration:", duration)
-                    if batch % 10 == 0:
-                        print("\nGenerated Script:")
-                        generated_script = dp.devectorize(
-                            prediction[:,0], "script", 
+                    if step % 10 == 0:
+                        print("\nGenerated Script Train:")
+                        generated_script_train = dp.devectorize(
+                            prediction_train[:,0], "script", 
                             description_chars, script_chars)
-                        print(generated_script)
+                        print(generated_script_train.rstrip())
+                        print("Trailing whitespace:", len(generated_script_train) 
+                              - len(generated_script_train.rstrip()))
+                        print("\nGenerated Script Inference:")
+                        generated_script_inference = dp.devectorize(
+                            prediction_inference[:,0], "script", 
+                            description_chars, script_chars)
+                        print(generated_script_inference.rstrip())
+                        print("Trailing whitespace:", len(generated_script_inference) 
+                              - len(generated_script_inference.rstrip()))
                     loss_track.append(loss)
                     step = epoch*((len(script_arrays)-1)//BATCH_SIZE + 1) + batch
+                    if len(loss_track) >= 3 and max(
+                            loss_track[-3], loss_track[-2], loss_track[-1]) < 0.05:
+                        raise KeyboardInterrupt
         except KeyboardInterrupt:
             print("\nTraining interrupted!")
         else:
@@ -515,7 +530,33 @@ def train_on_desc2code_task(session, training_data, description_chars,
 
         coordinator.join(threads)
 
-    return loss_track
+    return model, loss_track
+
+
+def validate_on_desc2code_task(session, model, validation_data, 
+                               description_chars, script_chars):
+    print("\nVectorizing data...")
+    description_arrays, script_arrays = dp.vectorize_examples(
+        validation_data, description_chars, script_chars,
+        description_vocab_size=ENCODER_VOCAB_SIZE, 
+        python_vocab_size=DECODER_VOCAB_SIZE)
+
+    description_values_count, script_values_count = get_vocab_sizes(
+        description_chars, script_chars, ENCODER_VOCAB_SIZE, 
+        ENCODER_VOCAB_SIZE)
+
+    validation_inputs, validation_targets = dp.merge_arrays(
+        description_arrays, script_arrays)
+
+    start_time = time()
+    feed_dict = model.make_train_inputs(
+        validation_inputs, validation_input_lengths, 
+        validation_targets, validation_target_lengths)
+    loss, prediction = session.run(
+        [model.loss, model.decoder_prediction_inference], feed_dict)
+    duration = time() - start_time
+
+    return loss
 
 
 def main():
@@ -538,11 +579,16 @@ def main():
                                             vocab_lower=2, vocab_upper=10,
                                             batch_size=BATCH_SIZE)
         else:
-            loss_track = train_on_desc2code_task(session, training_data_dict, 
-                                                 description_chars, script_chars,
-                                                 feed_dict=True)
+            model, loss_track = train_on_desc2code_task(
+                session, training_data_dict, description_chars, 
+                script_chars, feed_dict=True)
+            print("Evaluating model on validation dataset...")
+            validation_loss = validate_on_desc2code_task(
+                session, model, validation_data_dict, 
+                description_chars, script_chars, feed_dict)
         plot_loss(loss_track)
-        print("Final loss:", loss_track[-1])
+        print("Final training loss:", loss_track[-1])
+        print("Validation loss:", validation_loss)
 
 
 if __name__ == '__main__':
