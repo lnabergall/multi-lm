@@ -27,7 +27,7 @@ COPY_TASK = False
 # Hyperparameters
 ENCODER_VOCAB_SIZE = 0
 DECODER_VOCAB_SIZE = 0
-HIDDEN_DIM = 64
+HIDDEN_DIM = 120
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 32
@@ -291,10 +291,23 @@ def randomize_insync(*args):
         np.random.set_state(state)
 
 
+def moving_average(sequence, window_size):
+    sum_ = 0
+    sequence_average = [0 for x in sequence]
+    for i in range(0, window_size):
+        if i < window_size:
+            sum_ = sum_ + sequence[i]
+            sequence_average[i] = sum_ / (i+1)
+        else:
+            sum_ = sum_ - sequence[i-window_size] + sequence[i]
+            sequence_average[i] = sum_ / window_size
+
+    return sequence_average
+
+
 def plot_loss(loss_track):
     plotter.plot(loss_track)
-    average_loss_track = [sum(loss_track[3*(i+1)//4 : i+1])/((i+4)//4)
-                          for i in range(len(loss_track))]
+    average_loss_track = moving_average(loss_track, 20)
     plotter.plot(average_loss_track)
     plotter.show()
 
@@ -315,6 +328,7 @@ def get_vocab_sizes(description_chars, script_chars, encoder_vocab_size,
             script_values_count = len(script_chars) + 2
 
     return description_values_count, script_values_count
+
 
 def train_on_copy_task(session, length_from=3, length_to=8,
                        vocab_lower=2, vocab_upper=10,
@@ -386,8 +400,8 @@ def train_on_copy_task(session, length_from=3, length_to=8,
     return loss_track
 
 
-def train_on_desc2code_task(session, training_data, description_chars, 
-                            script_chars, feed_dict):
+def train_on_desc2code_task(session, training_data, validation_data, 
+                            description_chars, script_chars, feed_dict):
     print("\nVectorizing data...")
     if feed_dict:
         description_arrays, script_arrays = dp.vectorize_examples(
@@ -486,6 +500,16 @@ def train_on_desc2code_task(session, training_data, description_chars,
                     if len(loss_track) >= 3 and max(
                             loss_track[-3], loss_track[-2], loss_track[-1]) < 0.05:
                         raise KeyboardInterrupt
+                print("\nEvaluating on validation dataset...")
+                validation_loss, validate_targets, validate_logits = (
+                    validate_on_desc2code_task(session, model, validation_data, 
+                                               description_chars, script_chars))
+                np.set_printoptions(threshold=1000000000)
+                print("\nValidation Sample Logits:", validate_logits[:,1])
+                print("Target Values:", validate_targets[:,1])
+                print("\nValidation Sample Logits:", validate_logits[:,-2])
+                print("Target Values:", validate_targets[:,-2])
+                print("\nValidation loss:", validation_loss)
         except KeyboardInterrupt:
             print("\nTraining interrupted!")
         else:
@@ -540,6 +564,10 @@ def validate_on_desc2code_task(session, model, validation_data,
         validation_data, description_chars, script_chars,
         description_vocab_size=ENCODER_VOCAB_SIZE, 
         python_vocab_size=DECODER_VOCAB_SIZE)
+    validation_input_lengths, validation_target_lengths = [], []
+    for desc_array, script_array in zip(description_arrays, script_arrays):
+        validation_input_lengths.append(desc_array.shape[1])
+        validation_target_lengths.append(script_array.shape[1])
 
     description_values_count, script_values_count = get_vocab_sizes(
         description_chars, script_chars, ENCODER_VOCAB_SIZE, 
@@ -552,11 +580,12 @@ def validate_on_desc2code_task(session, model, validation_data,
     feed_dict = model.make_train_inputs(
         validation_inputs, validation_input_lengths, 
         validation_targets, validation_target_lengths)
-    loss, prediction = session.run(
-        [model.loss, model.decoder_prediction_inference], feed_dict)
+    loss, logits, prediction = session.run(
+        [model.loss, model.decoder_logits_inference, 
+         model.decoder_prediction_inference], feed_dict)
     duration = time() - start_time
 
-    return loss
+    return loss, validation_targets, logits
 
 
 def main():
@@ -580,14 +609,14 @@ def main():
                                             batch_size=BATCH_SIZE)
         else:
             model, loss_track = train_on_desc2code_task(
-                session, training_data_dict, description_chars, 
-                script_chars, feed_dict=True)
-            print("Evaluating model on validation dataset...")
+                session, training_data_dict, validation_data_dict, 
+                description_chars, script_chars, feed_dict=True)
+            print("\nEvaluating on validation dataset...")
             validation_loss = validate_on_desc2code_task(
                 session, model, validation_data_dict, 
-                description_chars, script_chars, feed_dict)
+                description_chars, script_chars)
         plot_loss(loss_track)
-        print("Final training loss:", loss_track[-1])
+        print("\nFinal training loss:", loss_track[-1])
         print("Validation loss:", validation_loss)
 
 

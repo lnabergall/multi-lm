@@ -311,9 +311,9 @@ def merge_arrays(description_arrays, script_arrays):
     for i, (desc_array, script_array) in enumerate(
             zip(description_arrays, script_arrays)):
         for j in range(desc_array.shape[1]):
-            merged_description_array[j, i] = desc_array[j]
+            merged_description_array[j, i] = desc_array[0, j]
         for j in range(script_array.shape[1]):
-            merged_script_array[j, i] = script_array[j]
+            merged_script_array[j, i] = script_array[0, j]
 
     return merged_description_array, merged_script_array
 
