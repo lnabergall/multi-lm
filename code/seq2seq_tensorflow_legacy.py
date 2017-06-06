@@ -294,7 +294,7 @@ def randomize_insync(*args):
 def moving_average(sequence, window_size):
     sum_ = 0
     sequence_average = [0 for x in sequence]
-    for i in range(0, window_size):
+    for i in range(len(sequence)):
         if i < window_size:
             sum_ = sum_ + sequence[i]
             sequence_average[i] = sum_ / (i+1)
@@ -305,9 +305,10 @@ def moving_average(sequence, window_size):
     return sequence_average
 
 
-def plot_loss(loss_track):
-    plotter.plot(loss_track)
-    average_loss_track = moving_average(loss_track, 20)
+def plot_loss(*loss_tracks):
+    for loss_track in loss_tracks:
+        plotter.plot(loss_track)
+    average_loss_track = moving_average(loss_tracks[0], 100)
     plotter.plot(average_loss_track)
     plotter.show()
 
@@ -453,7 +454,8 @@ def train_on_desc2code_task(session, training_data, validation_data,
                                       train_targets, train_target_lengths)
     summary_writer = tf.summary.FileWriter(
         os.path.join(MODEL_DIR, "desc2code_task"), session.graph)
-    loss_track = []
+    train_loss_track = []
+    validation_loss_track = []
     if feed_dict:
         try:
             step = 0
@@ -495,10 +497,11 @@ def train_on_desc2code_task(session, training_data, validation_data,
                         print(generated_script_inference.rstrip())
                         print("Trailing whitespace:", len(generated_script_inference) 
                               - len(generated_script_inference.rstrip()))
-                    loss_track.append(loss)
+                    train_loss_track.append(loss)
                     step = epoch*((len(script_arrays)-1)//BATCH_SIZE + 1) + batch
-                    if len(loss_track) >= 3 and max(
-                            loss_track[-3], loss_track[-2], loss_track[-1]) < 0.05:
+                    if len(train_loss_track) >= 3 and max(
+                            train_loss_track[-3], train_loss_track[-2], 
+                            train_loss_track[-1]) < 0.05:
                         raise KeyboardInterrupt
                 print("\nEvaluating on validation dataset...")
                 validation_loss, validate_targets, validate_logits = (
@@ -510,6 +513,7 @@ def train_on_desc2code_task(session, training_data, validation_data,
                 print("\nValidation Sample Logits:", validate_logits[:,-2])
                 print("Target Values:", validate_targets[:,-2])
                 print("\nValidation loss:", validation_loss)
+                validation_loss_track.append(validation_loss)
         except KeyboardInterrupt:
             print("\nTraining interrupted!")
         else:
@@ -541,7 +545,7 @@ def train_on_desc2code_task(session, training_data, validation_data,
                         print(generated_script)
                         print("Length:", len(generated_script))
                         print("Vector:", prediction[:,0])
-                loss_track.append(loss)
+                train_loss_track.append(loss)
                 batch += 1
         except KeyboardInterrupt:
             print("\nTraining interrupted!")
@@ -554,7 +558,7 @@ def train_on_desc2code_task(session, training_data, validation_data,
 
         coordinator.join(threads)
 
-    return model, loss_track
+    return model, train_loss_track, validation_loss_track
 
 
 def validate_on_desc2code_task(session, model, validation_data, 
@@ -608,16 +612,21 @@ def main():
                                             vocab_lower=2, vocab_upper=10,
                                             batch_size=BATCH_SIZE)
         else:
-            model, loss_track = train_on_desc2code_task(
+            model, train_loss_track, validation_loss_track = train_on_desc2code_task(
                 session, training_data_dict, validation_data_dict, 
                 description_chars, script_chars, feed_dict=True)
             print("\nEvaluating on validation dataset...")
-            validation_loss = validate_on_desc2code_task(
+            final_validation_loss = validate_on_desc2code_task(
                 session, model, validation_data_dict, 
                 description_chars, script_chars)
-        plot_loss(loss_track)
-        print("\nFinal training loss:", loss_track[-1])
-        print("Validation loss:", validation_loss)
+            validation_loss_track_expanded = []
+            for loss in validation_loss_track:
+                validation_loss_track_expanded.extend([loss]*10)
+            for i in range(len(train_loss_track) - len(validation_loss_track)):
+                validation_loss_track_expanded.append(final_validation_loss)
+        plot_loss(train_loss_track, validation_loss_track)
+        print("\nFinal training loss:", train_loss_track[-1])
+        print("Final validation loss:", final_validation_loss)
 
 
 if __name__ == '__main__':
