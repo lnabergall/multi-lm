@@ -121,11 +121,11 @@ def output_predict_tuple(logits_sequences, target_sequences, index, file):
 
 
 if __name__ == '__main__':
-    # compactify_log("train_run_log2.txt")
-    # get_loss_statistics("train_run_log2_compact.txt")
+    compactify_log("train_run_log3_truncated.txt")
+    get_loss_statistics("train_run_log3_truncated_compact.txt")
     logits_sequences, target_sequences = extract_validation_samples(
-        "train_run_log2.txt")
-    with open("train_run_log2_prediction_info.txt", "w") as info_file:
+        "train_run_log3_truncated.txt")
+    with open("train_run_log3_truncated_prediction_info.txt", "w") as info_file:
         print("\n", file=info_file)
         output_predict_tuple(logits_sequences, target_sequences, 0, info_file)
         print("\n\n", file=info_file)

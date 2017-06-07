@@ -307,7 +307,10 @@ def moving_average(sequence, window_size):
 
 def plot_loss(*loss_tracks):
     for loss_track in loss_tracks:
-        plotter.plot(loss_track)
+        try:
+            plotter.plot(loss_track)
+        except ValueError:
+            print("Problem with displaying a loss track!")
     average_loss_track = moving_average(loss_tracks[0], 100)
     plotter.plot(average_loss_track)
     plotter.show()
@@ -479,9 +482,8 @@ def train_on_desc2code_task(session, training_data, validation_data,
                         _, loss = session.run(
                             [model.train_op, model.loss], feed_dict)
                     duration  = time() - start_time
-                    if step % 3 == 0:
-                        print("\nepoch:", epoch, "-- batch:", batch, "-- loss:", loss, 
-                              "-- duration:", duration)
+                    print("\nepoch:", epoch, "-- batch:", batch, "-- loss:", loss, 
+                          "-- duration:", duration)
                     if step % 10 == 0:
                         print("\nGenerated Script Train:")
                         generated_script_train = dp.devectorize(
@@ -504,14 +506,35 @@ def train_on_desc2code_task(session, training_data, validation_data,
                             train_loss_track[-1]) < 0.05:
                         raise KeyboardInterrupt
                 print("\nEvaluating on validation dataset...")
-                validation_loss, validate_targets, validate_logits = (
+                (validation_loss, validate_targets, 
+                 validate_logits, validate_prediction) = (
                     validate_on_desc2code_task(session, model, validation_data, 
                                                description_chars, script_chars))
                 np.set_printoptions(threshold=1000000000)
-                print("\nValidation Sample Logits:", validate_logits[:,1])
-                print("Target Values:", validate_targets[:,1])
-                print("\nValidation Sample Logits:", validate_logits[:,-2])
-                print("Target Values:", validate_targets[:,-2])
+                if epoch == 0 or epoch == EPOCHS-1:
+                    print("\nValidation Sample Logits:\n", validate_logits[:,1])
+                    print("Target Values:\n", validate_targets[:,1])
+                generated_script_validation = dp.devectorize(
+                        validate_prediction[:,1], "script", 
+                        description_chars, script_chars)
+                print("\nValidation Greedy Prediction:\n", 
+                      generated_script_validation.rstrip())
+                target_script = dp.devectorize(
+                        validate_targets[:,1], "script", 
+                        description_chars, script_chars)
+                print("\nTarget Script:\n", target_script.rstrip())
+                if epoch == 0 or epoch == EPOCHS-1:
+                    print("\nValidation Sample Logits:\n", validate_logits[:,-2])
+                    print("Target Values:\n", validate_targets[:,-2])
+                generated_script_validation = dp.devectorize(
+                        validate_prediction[:,-2], "script", 
+                        description_chars, script_chars)
+                print("\nValidation Greedy Prediction:\n", 
+                      generated_script_validation.rstrip())
+                target_script = dp.devectorize(
+                        validate_targets[:,-2], "script", 
+                        description_chars, script_chars)
+                print("\nTarget Script:\n", target_script.rstrip())
                 print("\nValidation loss:", validation_loss)
                 validation_loss_track.append(validation_loss)
         except KeyboardInterrupt:
@@ -589,7 +612,19 @@ def validate_on_desc2code_task(session, model, validation_data,
          model.decoder_prediction_inference], feed_dict)
     duration = time() - start_time
 
-    return loss, validation_targets, logits
+    return loss, validation_targets, logits, prediction
+
+
+def truncate_data(training_data_dict, description_count=0):
+    if not description_count:
+        return training_data_dict
+    else:
+        truncated_training_data = {}
+        for i, desc in enumerate(training_data_dict):
+            if i < description_count:
+                truncated_training_data[desc] = training_data_dict[desc]
+
+    return truncated_training_data
 
 
 def main():
@@ -601,6 +636,7 @@ def main():
         description_chars = processed_data["description_char_counts"]
         script_chars = processed_data["python_char_counts"]
         training_data_dict = processed_data["training_data"]
+        training_data_dict = truncate_data(training_data_dict)
         validation_data_dict = processed_data["validation_data"]
         test_data_dict = processed_data["test_data"]
 
@@ -616,15 +652,17 @@ def main():
                 session, training_data_dict, validation_data_dict, 
                 description_chars, script_chars, feed_dict=True)
             print("\nEvaluating on validation dataset...")
-            final_validation_loss = validate_on_desc2code_task(
+            final_validation_loss, _, _, _ = validate_on_desc2code_task(
                 session, model, validation_data_dict, 
                 description_chars, script_chars)
+            print("\nCompleted.")
             validation_loss_track_expanded = []
+            expansion_factor = len(train_loss_track) // len(validation_loss_track)
             for loss in validation_loss_track:
-                validation_loss_track_expanded.extend([loss]*10)
-            for i in range(len(train_loss_track) - len(validation_loss_track)):
+                validation_loss_track_expanded.extend([loss]*expansion_factor)
+            for i in range(len(train_loss_track) - len(validation_loss_track_expanded)):
                 validation_loss_track_expanded.append(final_validation_loss)
-        plot_loss(train_loss_track, validation_loss_track)
+        plot_loss(train_loss_track, validation_loss_track_expanded)
         print("\nFinal training loss:", train_loss_track[-1])
         print("Final validation loss:", final_validation_loss)
 
