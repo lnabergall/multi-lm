@@ -6,6 +6,7 @@ using tf.contrib.seq2seq from tensorflow 1.0.
 import os
 from math import sqrt, isnan
 from time import time
+from datetime import datetime
 from random import shuffle
 
 import numpy as np
@@ -27,10 +28,10 @@ COPY_TASK = False
 # Hyperparameters
 ENCODER_VOCAB_SIZE = 0
 DECODER_VOCAB_SIZE = 0
-HIDDEN_DIM = 120
+HIDDEN_DIM = 250
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 EPOCHS = 50
 
 MODEL_DIR = os.path.join(os.pardir, "models")
@@ -45,24 +46,24 @@ class Seq2SeqModel():
                  decoder_vocab_size, encoder_embedding_size, decoder_embedding_size,
                  encoder_inputs_shape=None, encoder_inputs_length_shape=None,
                  decoder_targets_shape=None, decoder_targets_length_shape=None, 
-                 bidirectional=False, attention=False, feed_dict=False):
-        self.encoder_cell = encoder_cell
-        self.decoder_cell = decoder_cell
+                 bidirectional=False, attention=False, layers=1, model_dir=MODEL_DIR):
+        if layers == 1:
+            self.encoder_cell = encoder_cell
+            self.decoder_cell = decoder_cell
+        else:
+            self.encoder_cell = MultiRNNCell([encoder_cell]*layers)
+            self.decoder_cell = MultiRNNCell([decoder_cell]*layers)
 
         self.encoder_vocab_size = encoder_vocab_size
         self.decoder_vocab_size = decoder_vocab_size
         self.encoder_embedding_size = encoder_embedding_size
         self.decoder_embedding_size = decoder_embedding_size
 
-        self.encoder_inputs_shape = encoder_inputs_shape
-        self.encoder_inputs_length_shape = encoder_inputs_length_shape
-        self.decoder_targets_shape = decoder_targets_shape
-        self.decoder_targets_length_shape = decoder_targets_length_shape
-
         self.bidirectional = bidirectional
         self.attention = attention
+        self.layers = layers
 
-        self.feed_dict = feed_dict
+        self._make_save_directory(model_dir)
         self._make_graph()
 
     def _make_graph(self):
@@ -79,57 +80,17 @@ class Seq2SeqModel():
         self._init_optimizer()
 
     def _init_placeholders(self):
-        if self.feed_dict:
-            # Everything is time-major
-            self.encoder_inputs = tf.placeholder(
-                shape=(None, None), dtype=tf.int32, name="encoder_inputs")
-            self.encoder_inputs_length = tf.placeholder(
-                shape=(None,), dtype=tf.int32, name="encoder_inputs_length")
+        # Everything is time-major
+        self.encoder_inputs = tf.placeholder(
+            shape=(None, None), dtype=tf.int32, name="encoder_inputs")
+        self.encoder_inputs_length = tf.placeholder(
+            shape=(None,), dtype=tf.int32, name="encoder_inputs_length")
 
-            # Required for training, not for testing
-            self.decoder_targets = tf.placeholder(
-                shape=(None, None), dtype=tf.int32, name="decoder_targets")
-            self.decoder_targets_length = tf.placeholder(
-                shape=(None,), dtype=tf.int32, name="decoder_targets_length")
-        else:
-            # Inputs are batch-major
-            self.inputs_initializer = tf.placeholder(
-                shape=self.encoder_inputs_shape, 
-                dtype=tf.int32, name="inputs_initializer")
-            self.inputs_length_initializer = tf.placeholder(
-                shape=self.encoder_inputs_length_shape, 
-                dtype=tf.int32, name="inputs_length_initializer")
-
-            # Required for training, not for testing
-            self.targets_initializer = tf.placeholder(
-                shape=self.decoder_targets_shape, 
-                dtype=tf.int32, name="targets_initializer")
-            self.targets_length_initializer = tf.placeholder(
-                shape=self.decoder_targets_length_shape, 
-                dtype=tf.int32, name="targets_length_initializer")
-
-            self.inputs = tf.Variable(
-                self.inputs_initializer, trainable=False, collections=[])
-            self.inputs_length = tf.Variable(
-                self.inputs_length_initializer, trainable=False, collections=[])
-
-            self.targets = tf.Variable(
-                self.targets_initializer, trainable=False, collections=[])
-            self.targets_length = tf.Variable(
-                self.targets_length_initializer, trainable=False, collections=[])
-
-            # input_, input_length, target, target_length = tf.train.slice_input_producer(
-            #     [self.inputs, self.inputs_length, self.targets, self.targets_length], 
-            #     num_epochs=EPOCHS, capacity=5000)
-            (self.encoder_inputs, self.encoder_inputs_length, 
-             self.decoder_targets, self.decoder_targets_length) = tf.train.batch(
-               [self.inputs, self.inputs_length, self.targets, self.targets_length], 
-                batch_size=BATCH_SIZE, num_threads=8, 
-                capacity=self.encoder_inputs_shape[0], enqueue_many=True)
-
-            # Everything is time-major
-            self.encoder_inputs = tf.transpose(self.encoder_inputs, [1, 0])
-            self.decoder_targets = tf.transpose(self.decoder_targets, [1, 0])
+        # Required for training, not for testing
+        self.decoder_targets = tf.placeholder(
+            shape=(None, None), dtype=tf.int32, name="decoder_targets")
+        self.decoder_targets_length = tf.placeholder(
+            shape=(None,), dtype=tf.int32, name="decoder_targets_length")
 
     def _init_decoder_train_connectors(self):
         with tf.name_scope("DecoderTrainFeeds"):
@@ -283,6 +244,34 @@ class Seq2SeqModel():
             self.encoder_inputs_length: inputs_length_,
         }
 
+    def _make_save_directory(self, base_directory):
+        utcnow_string = str(datetime.utcnow().replace(microsecond=0))
+        utcnow_string = utcnow_string.replace(" ", "_").replace(":", "-")
+        self.model_dir = os.path.join(base_directory, 
+                                      "model_trained_on_" + utcnow_string)
+        os.makedirs(self.model_dir)
+        with open(os.path.join(self.model_dir, "model_definition.txt"), "w") as file:
+            print("Sequence-to-sequence recurrent neural network model", file=file)
+            print("\nInput: sequence of characters", file=file)
+            print("Output: sequence of characters", file=file)
+            print("\nEncoder cell:", type(self.encoder_cell), file=file)
+            print("Decoder cell:", type(self.decoder_cell), file=file)
+            print("Hidden dimension:", HIDDEN_DIM, file=file)
+            print("\nLayers:", self.layers, file=file)
+            print("Bidirectional encoder:", self.bidirectional, file=file)
+            print("Attention:", self.attention, file=file)
+            print("\nBatch size:", BATCH_SIZE, file=file)
+            print("Truncated backprop:", False, file=file)
+            print("Learning rate:", LEARNING_RATE, file=file)
+            print("\nOptimization algorithm:", 
+                  type(tf.train.RMSPropOptimizer(LEARNING_RATE)), file=file)
+
+    def save(self, session, step):
+        save_path = saver.save(
+            session, os.path.join(self.model_dir, "desc2code_model"), 
+            global_step=step)
+        return save_path
+
 
 def randomize_insync(*args):
     state = np.random.get_state()
@@ -305,6 +294,11 @@ def moving_average(sequence, window_size):
     return sequence_average
 
 
+def early_stop(validation_loss_track):
+    return (min(validation_loss_track[-i] for i in range(1, 7)) 
+            == validation_loss_track[-6])
+
+
 def plot_loss(*loss_tracks):
     for loss_track in loss_tracks:
         try:
@@ -317,19 +311,15 @@ def plot_loss(*loss_tracks):
 
 
 def get_vocab_sizes(description_chars, script_chars, encoder_vocab_size, 
-                    decoder_vocab_size, feed_dict=True):
+                    decoder_vocab_size):
     if encoder_vocab_size:
         description_values_count = encoder_vocab_size + 4
     else:
-        description_values_count = len(description_chars) + 3
-        if feed_dict:
-            description_values_count = len(description_chars) + 2
+        description_values_count = len(description_chars) + 2
     if decoder_vocab_size:
         script_values_count = decoder_vocab_size + 4
     else:
-        script_values_count = len(script_chars) + 3
-        if feed_dict:
-            script_values_count = len(script_chars) + 2
+        script_values_count = len(script_chars) + 2
 
     return description_values_count, script_values_count
 
@@ -405,181 +395,119 @@ def train_on_copy_task(session, length_from=3, length_to=8,
 
 
 def train_on_desc2code_task(session, training_data, validation_data, 
-                            description_chars, script_chars, feed_dict):
-    print("\nVectorizing data...")
-    if feed_dict:
-        description_arrays, script_arrays = dp.vectorize_examples(
-            training_data, description_chars, script_chars,
-            description_vocab_size=ENCODER_VOCAB_SIZE, 
-            python_vocab_size=DECODER_VOCAB_SIZE)
-    else:
-        train_inputs, train_targets, train_input_lengths, train_target_lengths \
-            = dp.vectorize_data(training_data, description_chars, script_chars, 
-                                backprop_timesteps=BACKPROP_TIMESTEPS,
-                                description_vocab_size=ENCODER_VOCAB_SIZE, 
-                                python_vocab_size=DECODER_VOCAB_SIZE)
+                            description_chars, script_chars):
+    model_dir = os.path.join(MODEL_DIR, "desc2code_task")
 
+    print("\nVectorizing data...")
+    description_arrays, script_arrays = dp.vectorize_examples(
+        training_data, description_chars, script_chars,
+        description_vocab_size=ENCODER_VOCAB_SIZE, 
+        python_vocab_size=DECODER_VOCAB_SIZE)
     description_values_count, script_values_count = get_vocab_sizes(
         description_chars, script_chars, ENCODER_VOCAB_SIZE, 
-        ENCODER_VOCAB_SIZE, feed_dict)
+        ENCODER_VOCAB_SIZE)
 
     print("\nCreating model...")
-    if feed_dict:
-        model = Seq2SeqModel(encoder_cell=LSTMCell(HIDDEN_DIM),
-                             decoder_cell=LSTMCell(HIDDEN_DIM),
-                             encoder_vocab_size=description_values_count,
-                             decoder_vocab_size=script_values_count,
-                             encoder_embedding_size=description_values_count,
-                             decoder_embedding_size=script_values_count,
-                             attention=False, 
-                             bidirectional=False,
-                             feed_dict=feed_dict)
-    else:
-        model = Seq2SeqModel(encoder_cell=LSTMCell(HIDDEN_DIM),
-                             decoder_cell=LSTMCell(HIDDEN_DIM),
-                             encoder_vocab_size=description_values_count,
-                             decoder_vocab_size=script_values_count,
-                             encoder_embedding_size=description_values_count,
-                             decoder_embedding_size=script_values_count,
-                             encoder_inputs_shape=train_inputs.shape,
-                             encoder_inputs_length_shape=(len(train_input_lengths),),
-                             decoder_targets_shape=train_targets.shape,
-                             decoder_targets_length_shape=(len(train_target_lengths),),
-                             attention=False, 
-                             bidirectional=False,
-                             feed_dict=feed_dict)
+    model = Seq2SeqModel(encoder_cell=LSTMCell(HIDDEN_DIM),
+                         decoder_cell=LSTMCell(HIDDEN_DIM),
+                         encoder_vocab_size=description_values_count,
+                         decoder_vocab_size=script_values_count,
+                         encoder_embedding_size=description_values_count,
+                         decoder_embedding_size=script_values_count,
+                         attention=False, 
+                         bidirectional=False,
+                         model_dir=model_dir)
     summary_op = tf.summary.merge_all()
     saver = tf.train.Saver()
     session.run(tf.global_variables_initializer())
     session.run(tf.local_variables_initializer())
-    if not feed_dict:
-        model.initialize_train_inputs(session, train_inputs, train_input_lengths, 
-                                      train_targets, train_target_lengths)
-    summary_writer = tf.summary.FileWriter(
-        os.path.join(MODEL_DIR, "desc2code_task"), session.graph)
+    # summary_writer = tf.summary.FileWriter(
+    #     os.path.join(MODEL_DIR, "desc2code_task"), session.graph)
     train_loss_track = []
     validation_loss_track = []
-    if feed_dict:
-        try:
-            step = 0
-            for epoch in range(EPOCHS):
-                print("\nBatching data...")
-                shuffle(description_arrays)
-                shuffle(script_arrays)
-                train_inputs, train_targets, train_input_lengths, train_target_lengths \
-                    = dp.make_batches(description_arrays, script_arrays, BATCH_SIZE)
-                for batch in range((len(script_arrays) - 1) // BATCH_SIZE + 1):
-                    start_time = time()
-                    feed_dict = model.make_train_inputs(
-                        train_inputs[batch], train_input_lengths[batch], 
-                        train_targets[batch], train_target_lengths[batch])
-                    if step % 10 == 0:
-                        _, loss, prediction_train, prediction_inference = session.run(
-                            [model.train_op, model.loss, 
-                             model.decoder_prediction_train,
-                             model.decoder_prediction_inference], feed_dict)
-                    else:
-                        _, loss = session.run(
-                            [model.train_op, model.loss], feed_dict)
-                    duration  = time() - start_time
-                    print("\nepoch:", epoch, "-- batch:", batch, "-- loss:", loss, 
-                          "-- duration:", duration)
-                    if step % 10 == 0:
-                        print("\nGenerated Script Train:")
-                        generated_script_train = dp.devectorize(
-                            prediction_train[:,0], "script", 
-                            description_chars, script_chars)
-                        print(generated_script_train.rstrip())
-                        print("Trailing whitespace:", len(generated_script_train) 
-                              - len(generated_script_train.rstrip()))
-                        print("\nGenerated Script Inference:")
-                        generated_script_inference = dp.devectorize(
-                            prediction_inference[:,0], "script", 
-                            description_chars, script_chars)
-                        print(generated_script_inference.rstrip())
-                        print("Trailing whitespace:", len(generated_script_inference) 
-                              - len(generated_script_inference.rstrip()))
-                    train_loss_track.append(loss)
-                    step = epoch*((len(script_arrays)-1)//BATCH_SIZE + 1) + batch
-                    if len(train_loss_track) >= 3 and max(
-                            train_loss_track[-3], train_loss_track[-2], 
-                            train_loss_track[-1]) < 0.05:
-                        raise KeyboardInterrupt
-                print("\nEvaluating on validation dataset...")
-                (validation_loss, validate_targets, 
-                 validate_logits, validate_prediction) = (
-                    validate_on_desc2code_task(session, model, validation_data, 
-                                               description_chars, script_chars))
-                np.set_printoptions(threshold=1000000000)
-                if epoch == 0 or epoch == EPOCHS-1:
-                    print("\nValidation Sample Logits:\n", validate_logits[:,1])
-                    print("Target Values:\n", validate_targets[:,1])
-                generated_script_validation = dp.devectorize(
-                        validate_prediction[:,1], "script", 
-                        description_chars, script_chars)
-                print("\nValidation Greedy Prediction:\n", 
-                      generated_script_validation.rstrip())
-                target_script = dp.devectorize(
-                        validate_targets[:,1], "script", 
-                        description_chars, script_chars)
-                print("\nTarget Script:\n", target_script.rstrip())
-                if epoch == 0 or epoch == EPOCHS-1:
-                    print("\nValidation Sample Logits:\n", validate_logits[:,-2])
-                    print("Target Values:\n", validate_targets[:,-2])
-                generated_script_validation = dp.devectorize(
-                        validate_prediction[:,-2], "script", 
-                        description_chars, script_chars)
-                print("\nValidation Greedy Prediction:\n", 
-                      generated_script_validation.rstrip())
-                target_script = dp.devectorize(
-                        validate_targets[:,-2], "script", 
-                        description_chars, script_chars)
-                print("\nTarget Script:\n", target_script.rstrip())
-                print("\nValidation loss:", validation_loss)
-                validation_loss_track.append(validation_loss)
-        except KeyboardInterrupt:
-            print("\nTraining interrupted!")
-        else:
-            print("\nTraining completed!")
-        finally:
-            saver.save(session, os.path.join(MODEL_DIR, "desc2code_task"), 
-                       global_step=step)
-    else:           
-        coordinator = tf.train.Coordinator()
-        threads = tf.train.start_queue_runners(sess=session, coord=coordinator)
-        try:
-            batch = 0
-            while not coordinator.should_stop():
+    try:
+        step = 0
+        for epoch in range(EPOCHS):
+            print("\nBatching data...")
+            shuffle(description_arrays)
+            shuffle(script_arrays)
+            train_inputs, train_targets, train_input_lengths, train_target_lengths \
+                = dp.make_batches(description_arrays, script_arrays, BATCH_SIZE)
+            for batch in range((len(script_arrays) - 1) // BATCH_SIZE + 1):
                 start_time = time()
-                if batch % 500 != 0:
-                    _, loss = session.run([model.train_op, model.loss])
+                feed_dict = model.make_train_inputs(
+                    train_inputs[batch], train_input_lengths[batch], 
+                    train_targets[batch], train_target_lengths[batch])
+                if step % 10 == 0:
+                    _, loss, prediction_train, prediction_inference = session.run(
+                        [model.train_op, model.loss, 
+                         model.decoder_prediction_train,
+                         model.decoder_prediction_inference], feed_dict)
                 else:
-                    _, loss, prediction = session.run([
-                        model.train_op, model.loss, model.decoder_prediction_inference])
-                duration = time() - start_time
-                if batch % 100 == 0:
-                    print("batch:", batch, "-- loss:", loss, "-- duration:", duration)
-                    summary_string = session.run(summary_op)
-                    summary_writer.add_summary(summary_string, batch)
-                    if batch % 500 == 0:
-                        print("\nGenerated script:")
-                        generated_script = dp.devectorize(
-                            prediction[:,0], "script", description_chars, script_chars)
-                        print(generated_script)
-                        print("Length:", len(generated_script))
-                        print("Vector:", prediction[:,0])
+                    _, loss = session.run(
+                        [model.train_op, model.loss], feed_dict)
+                duration  = time() - start_time
+                print("\nepoch:", epoch, "-- batch:", batch, "-- loss:", loss, 
+                      "-- duration:", duration)
+                if step % 10 == 0:
+                    print("\nGenerated Script Train:")
+                    generated_script_train = dp.devectorize(
+                        prediction_train[:,0], "script", 
+                        description_chars, script_chars)
+                    print(generated_script_train.rstrip())
+                    print("Trailing whitespace:", len(generated_script_train) 
+                          - len(generated_script_train.rstrip()))
+                    print("\nGenerated Script Inference:")
+                    generated_script_inference = dp.devectorize(
+                        prediction_inference[:,0], "script", 
+                        description_chars, script_chars)
+                    print(generated_script_inference.rstrip())
+                    print("Trailing whitespace:", len(generated_script_inference) 
+                          - len(generated_script_inference.rstrip()))
                 train_loss_track.append(loss)
-                batch += 1
-        except KeyboardInterrupt:
-            print("\nTraining interrupted!")
-        except tf.errors.OutOfRangeError:
-            print("\nTraining completed!")
-        finally:
-            saver.save(session, os.path.join(MODEL_DIR, "desc2code_task"), 
-                       global_step=batch)
-            coordinator.request_stop()
-
-        coordinator.join(threads)
+                step += 1
+            print("\nEvaluating on validation dataset...")
+            (validation_loss, validate_targets, 
+             validate_logits, validate_prediction) = (
+                validate_on_desc2code_task(session, model, validation_data, 
+                                           description_chars, script_chars))
+            np.set_printoptions(threshold=1000000000)
+            if epoch == 0 or epoch == EPOCHS-1:
+                print("\nValidation Sample Logits:\n", validate_logits[:,1])
+                print("Target Values:\n", validate_targets[:,1])
+            generated_script_validation = dp.devectorize(
+                    validate_prediction[:,1], "script", 
+                    description_chars, script_chars)
+            print("\nValidation Greedy Prediction:\n", 
+                  generated_script_validation.rstrip())
+            target_script = dp.devectorize(
+                    validate_targets[:,1], "script", 
+                    description_chars, script_chars)
+            print("\nTarget Script:\n", target_script.rstrip())
+            if epoch == 0 or epoch == EPOCHS-1:
+                print("\nValidation Sample Logits:\n", validate_logits[:,-2])
+                print("Target Values:\n", validate_targets[:,-2])
+            generated_script_validation = dp.devectorize(
+                    validate_prediction[:,-2], "script", 
+                    description_chars, script_chars)
+            print("\nValidation Greedy Prediction:\n", 
+                  generated_script_validation.rstrip())
+            target_script = dp.devectorize(
+                    validate_targets[:,-2], "script", 
+                    description_chars, script_chars)
+            print("\nTarget Script:\n", target_script.rstrip())
+            print("\nValidation loss:", validation_loss)
+            validation_loss_track.append(validation_loss)
+            if min(validation_loss_track) == validation_loss:
+                print("New best validation loss.")
+                save_path = model.save(session, step)
+                print("Saved model at", save_path)
+            if early_stop(validation_loss_track):
+                raise KeyboardInterrupt
+    except KeyboardInterrupt:
+        print("\nTraining interrupted!")
+    else:
+        print("\nTraining completed!")
 
     return model, train_loss_track, validation_loss_track
 
@@ -650,21 +578,15 @@ def main():
         else:
             model, train_loss_track, validation_loss_track = train_on_desc2code_task(
                 session, training_data_dict, validation_data_dict, 
-                description_chars, script_chars, feed_dict=True)
-            print("\nEvaluating on validation dataset...")
-            final_validation_loss, _, _, _ = validate_on_desc2code_task(
-                session, model, validation_data_dict, 
                 description_chars, script_chars)
-            print("\nCompleted.")
             validation_loss_track_expanded = []
-            expansion_factor = len(train_loss_track) // len(validation_loss_track)
-            for loss in validation_loss_track:
-                validation_loss_track_expanded.extend([loss]*expansion_factor)
-            for i in range(len(train_loss_track) - len(validation_loss_track_expanded)):
-                validation_loss_track_expanded.append(final_validation_loss)
+            if validation_loss_track:
+                expansion_factor = len(train_loss_track) // len(validation_loss_track)
+                for loss in validation_loss_track:
+                    validation_loss_track_expanded.extend([loss]*expansion_factor)
         plot_loss(train_loss_track, validation_loss_track_expanded)
         print("\nFinal training loss:", train_loss_track[-1])
-        print("Final validation loss:", final_validation_loss)
+        print("Best validation loss:", validation_loss_track[-1])
 
 
 if __name__ == '__main__':
