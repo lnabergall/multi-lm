@@ -201,6 +201,37 @@ def process_data(data_dict):
     return processed_data_dict
 
 
+def get_dataset_statistics(training_data_dict, validation_data_dict, 
+                           test_data_dict, language="python"):
+    inputs = (list(training_data_dict.keys()) 
+        + list(validation_data_dict.keys()) + list(test_data_dict.keys()))
+    outputs = []
+    for description in inputs:
+        if description in training_data_dict:
+            outputs.append(training_data_dict[description][language])
+        elif description in validation_data_dict:
+            outputs.append(validation_data_dict[description][language])
+        elif description in test_data_dict:
+            outputs.append(test_data_dict[description][language])
+
+    input_lengths = [len(description) for description in inputs]
+    output_lengths = [len(script) for script in outputs]
+
+    inputs = sum(1 for input_length in input_lengths)
+    average_input_length = mean(input_lengths)
+    smallest_input_length = min(input_lengths)
+    largest_input_length = max(input_lengths)
+
+    outputs = sum(1 for output_length in output_lengths)
+    average_output_length = mean(output_lengths)
+    smallest_output_length = min(output_lengths)
+    largest_output_length = max(output_lengths)
+
+    return (inputs, average_input_length, smallest_input_length, 
+            largest_input_length, outputs, average_output_length, 
+            smallest_output_length, largest_output_length)
+
+
 def generate_char_labels(desc_char_counts, python_char_counts, dense=True,
                          description_vocab_size=0, python_vocab_size=0):
     desc_chars, python_chars = list(desc_char_counts), list(python_char_counts)
