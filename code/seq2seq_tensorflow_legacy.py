@@ -21,6 +21,7 @@ import data_processing as dp
 from data_processing import (PAD_VALUE, MAX_DESCRIPTION_LENGTH, 
                              MAX_SCRIPT_LENGTH)
 import data_processing_copy_task as dp_copy
+import training_storage as storage
 
 
 COPY_TASK = False
@@ -33,6 +34,7 @@ LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 16
 EPOCHS = 50
+OPTIMIZER = tf.train.RMSPropOptimizer(LEARNING_RATE)
 
 MODEL_DIR = os.path.join(os.pardir, "models")
 
@@ -43,10 +45,9 @@ class Seq2SeqModel():
     EOS = 1
 
     def __init__(self, encoder_cell, decoder_cell, encoder_vocab_size, 
-                 decoder_vocab_size, encoder_embedding_size, decoder_embedding_size,
-                 encoder_inputs_shape=None, encoder_inputs_length_shape=None,
-                 decoder_targets_shape=None, decoder_targets_length_shape=None, 
-                 bidirectional=False, attention=False, layers=1, model_dir=MODEL_DIR):
+                 decoder_vocab_size, encoder_embedding_size, 
+                 decoder_embedding_size, bidirectional=False, attention=False, 
+                 layers=1, model_dir=MODEL_DIR):
         if layers == 1:
             self.encoder_cell = encoder_cell
             self.decoder_cell = decoder_cell
@@ -54,6 +55,13 @@ class Seq2SeqModel():
             self.encoder_cell = MultiRNNCell([encoder_cell]*layers)
             self.decoder_cell = MultiRNNCell([decoder_cell]*layers)
 
+        self.description = ("Sequence-to-sequence recurrent neural network model" 
+                            " that generates Python scripts from programming" 
+                            " challenge descriptions")
+        self.input_description = "sequence of characters"
+        self.output_description = "sequence of characters"
+
+        self.hidden_dim = HIDDEN_DIM
         self.encoder_vocab_size = encoder_vocab_size
         self.decoder_vocab_size = decoder_vocab_size
         self.encoder_embedding_size = encoder_embedding_size
@@ -63,8 +71,14 @@ class Seq2SeqModel():
         self.attention = attention
         self.layers = layers
 
-        self._make_save_directory(model_dir)
+        self.batch_size = BATCH_SIZE
+        self.truncated_backprop = False
+        self.learning_rate = LEARNING_RATE
+        self.optimizer = OPTIMIZER
+
         self._make_graph()
+        self._store_model_architecture(model_dir)
+        self.saver = tf.train.Saver()
 
     def _make_graph(self):
         self._init_placeholders()
@@ -216,7 +230,7 @@ class Seq2SeqModel():
         targets = tf.transpose(self.decoder_train_targets, [1, 0])
         self.loss = sequence_loss(logits=logits, targets=targets,
                                   weights=self.loss_weights)
-        self.train_op = tf.train.RMSPropOptimizer(LEARNING_RATE).minimize(self.loss)
+        self.train_op = self.optimizer.minimize(self.loss)
 
     def initialize_train_inputs(self, session, inputs, inputs_length, 
                                 targets, targets_length):
@@ -244,33 +258,54 @@ class Seq2SeqModel():
             self.encoder_inputs_length: inputs_length_,
         }
 
-    def _make_save_directory(self, base_directory):
+    def _store_model_architecture(self, base_directory):
+        # Store in database
+        self.model_id = storage.store_model_info(
+            self.description, self.input_description, self.output_description,
+            type(self.encoder_cell), type(self.decoder_cell), self.layers,
+            self.bidirectional, self.attention, self.hidden_dim, 
+            self.encoder_vocab_size, self.decoder_vocab_size, 
+            self.encoder_embedding_size, self.decoder_embedding_size,
+            self.batch_size, self.truncated_backprop, self.learning_rate, 
+            self.optimizer)
+
+        # then store in text file
         utcnow_string = str(datetime.utcnow().replace(microsecond=0))
         utcnow_string = utcnow_string.replace(" ", "_").replace(":", "-")
         self.model_dir = os.path.join(base_directory, 
                                       "model_trained_on_" + utcnow_string)
         os.makedirs(self.model_dir)
         with open(os.path.join(self.model_dir, "model_definition.txt"), "w") as file:
-            print("Sequence-to-sequence recurrent neural network model", file=file)
-            print("\nInput: sequence of characters", file=file)
-            print("Output: sequence of characters", file=file)
+            print(self.description, file=file)
+            print("\nInput:", self.input_description file=file)
+            print("Output:", self.output_description, file=file)
             print("\nEncoder cell:", type(self.encoder_cell), file=file)
             print("Decoder cell:", type(self.decoder_cell), file=file)
-            print("Hidden dimension:", HIDDEN_DIM, file=file)
+            print("Hidden dimension:", self.hidden_dim, file=file)
+            print("\nEncoder vocabulary size:", self.encoder_vocab_size, file=file)
+            print("Decoder vocabulary size:", self.decoder_vocab_size, file=file)
+            print("\nEncoder embedding size:", 
+                  self.encoder_embedding_size, file=file)
+            print("Decoder embedding size:", 
+                  self.decoder_embedding_size, file=file)
             print("\nLayers:", self.layers, file=file)
             print("Bidirectional encoder:", self.bidirectional, file=file)
             print("Attention:", self.attention, file=file)
-            print("\nBatch size:", BATCH_SIZE, file=file)
-            print("Truncated backprop:", False, file=file)
-            print("Learning rate:", LEARNING_RATE, file=file)
-            print("\nOptimization algorithm:", 
-                  type(tf.train.RMSPropOptimizer(LEARNING_RATE)), file=file)
+            print("\nBatch size:", self.batch_size, file=file)
+            print("Truncated backprop:", self.truncated_backprop, file=file)
+            print("Learning rate:", self.learning_rate, file=file)
+            print("\nOptimization algorithm:", type(self.optimizer), file=file)
 
     def save(self, session, step):
-        save_path = saver.save(
+        if not hasattr(self, "model_save_path"):
+            self.model_save_path = (
+                os.path.join(self.model_dir, "desc2code_model") 
+                + "-" + str(step) + ".meta")
+            store_model_graph_file(self.model_id, self.model_save_path)
+        checkpoint_path = self.saver.save(
             session, os.path.join(self.model_dir, "desc2code_model"), 
             global_step=step)
-        return save_path
+        return checkpoint_path
 
 
 def randomize_insync(*args):
@@ -295,8 +330,8 @@ def moving_average(sequence, window_size):
 
 
 def early_stop(validation_loss_track):
-    return (min(validation_loss_track[-i] for i in range(1, 7)) 
-            == validation_loss_track[-6])
+    return (min(validation_loss_track[-i][0] for i in range(1, 7)) 
+            == validation_loss_track[-6][0])
 
 
 def plot_loss(*loss_tracks):
@@ -417,12 +452,9 @@ def train_on_desc2code_task(session, training_data, validation_data,
                          attention=False, 
                          bidirectional=False,
                          model_dir=model_dir)
-    summary_op = tf.summary.merge_all()
-    saver = tf.train.Saver()
     session.run(tf.global_variables_initializer())
     session.run(tf.local_variables_initializer())
-    # summary_writer = tf.summary.FileWriter(
-    #     os.path.join(MODEL_DIR, "desc2code_task"), session.graph)
+    start_training_timestamp = datetime.utcnow()
     train_loss_track = []
     validation_loss_track = []
     try:
@@ -464,7 +496,7 @@ def train_on_desc2code_task(session, training_data, validation_data,
                     print(generated_script_inference.rstrip())
                     print("Trailing whitespace:", len(generated_script_inference) 
                           - len(generated_script_inference.rstrip()))
-                train_loss_track.append(loss)
+                train_loss_track.append((loss, datetime.utcnow(), epoch, batch))
                 step += 1
             print("\nEvaluating on validation dataset...")
             (validation_loss, validate_targets, 
@@ -497,7 +529,8 @@ def train_on_desc2code_task(session, training_data, validation_data,
                     description_chars, script_chars)
             print("\nTarget Script:\n", target_script.rstrip())
             print("\nValidation loss:", validation_loss)
-            validation_loss_track.append(validation_loss)
+            validation_loss_track.append(
+                (validation_loss, datetime.utcnow(), epoch, batch))
             if min(validation_loss_track) == validation_loss:
                 print("New best validation loss.")
                 save_path = model.save(session, step)
@@ -509,7 +542,9 @@ def train_on_desc2code_task(session, training_data, validation_data,
     else:
         print("\nTraining completed!")
 
-    return model, train_loss_track, validation_loss_track
+
+    return (model, train_loss_track, validation_loss_track, 
+            save_path, start_training_timestamp)
 
 
 def validate_on_desc2code_task(session, model, validation_data, 
@@ -567,6 +602,10 @@ def main():
         training_data_dict = truncate_data(training_data_dict)
         validation_data_dict = processed_data["validation_data"]
         test_data_dict = processed_data["test_data"]
+        (input_sequences, average_input_length, smallest_input_length, 
+         largest_input_length, output_sequences, average_output_length,
+         smallest_output_length, largest_output_length) = dp.get_dataset_statistics(
+            training_data_dict, validation_data_dict, test_data_dict)
 
     tf.reset_default_graph()
     tf.set_random_seed(1)
@@ -576,14 +615,22 @@ def main():
                                             vocab_lower=2, vocab_upper=10,
                                             batch_size=BATCH_SIZE)
         else:
-            model, train_loss_track, validation_loss_track = train_on_desc2code_task(
+            (model, train_loss_track, validation_loss_track, 
+             parameters_file_path, start_training_timestamp) = train_on_desc2code_task(
                 session, training_data_dict, validation_data_dict, 
                 description_chars, script_chars)
+            run_id = storage.store_training_run(
+                model.model_id, parameters_file_path, start_training_timestamp,
+                input_sequences, average_input_length, smallest_input_length,
+                largest_input_length, output_sequences, average_output_length,
+                smallest_output_length, largest_output_length)
             validation_loss_track_expanded = []
             if validation_loss_track:
                 expansion_factor = len(train_loss_track) // len(validation_loss_track)
                 for loss in validation_loss_track:
                     validation_loss_track_expanded.extend([loss]*expansion_factor)
+            storage.store_evaluation_track(run_id, "training", train_loss_track)
+            storage.store_evaluation_track(run_id, "validation", validation_loss_track)
         plot_loss(train_loss_track, validation_loss_track_expanded)
         print("\nFinal training loss:", train_loss_track[-1])
         print("Best validation loss:", validation_loss_track[-1])
