@@ -29,7 +29,7 @@ COPY_TASK = False
 # Hyperparameters
 ENCODER_VOCAB_SIZE = 0
 DECODER_VOCAB_SIZE = 0
-HIDDEN_DIM = 250
+HIDDEN_DIM = 200
 LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 16
@@ -262,12 +262,12 @@ class Seq2SeqModel():
         # Store in database
         self.model_id = storage.store_model_info(
             self.description, self.input_description, self.output_description,
-            type(self.encoder_cell), type(self.decoder_cell), self.layers,
-            self.bidirectional, self.attention, self.hidden_dim, 
+            str(type(self.encoder_cell)), str(type(self.decoder_cell)), 
+            self.layers, self.bidirectional, self.attention, self.hidden_dim, 
             self.encoder_vocab_size, self.decoder_vocab_size, 
             self.encoder_embedding_size, self.decoder_embedding_size,
             self.batch_size, self.truncated_backprop, self.learning_rate, 
-            self.optimizer)
+            str(type(self.optimizer)))
 
         # then store in text file
         utcnow_string = str(datetime.utcnow().replace(microsecond=0))
@@ -277,7 +277,7 @@ class Seq2SeqModel():
         os.makedirs(self.model_dir)
         with open(os.path.join(self.model_dir, "model_definition.txt"), "w") as file:
             print(self.description, file=file)
-            print("\nInput:", self.input_description file=file)
+            print("\nInput:", self.input_description, file=file)
             print("Output:", self.output_description, file=file)
             print("\nEncoder cell:", type(self.encoder_cell), file=file)
             print("Decoder cell:", type(self.decoder_cell), file=file)
@@ -301,7 +301,7 @@ class Seq2SeqModel():
             self.model_save_path = (
                 os.path.join(self.model_dir, "desc2code_model") 
                 + "-" + str(step) + ".meta")
-            store_model_graph_file(self.model_id, self.model_save_path)
+            storage.store_model_graph_file(self.model_id, self.model_save_path)
         checkpoint_path = self.saver.save(
             session, os.path.join(self.model_dir, "desc2code_model"), 
             global_step=step)
@@ -335,12 +335,19 @@ def early_stop(validation_loss_track):
 
 
 def plot_loss(*loss_tracks):
-    for loss_track in loss_tracks:
+    if type(loss_tracks[0][0]) != float:
+        loss_only_tracks = []
+        for loss_track in loss_tracks:
+            loss_only_track = [eval_step[0] for eval_step in loss_track]
+            loss_only_tracks.append(loss_only_track)
+    else:
+        loss_only_tracks = loss_tracks
+    for loss_track in loss_only_tracks:
         try:
             plotter.plot(loss_track)
         except ValueError:
             print("Problem with displaying a loss track!")
-    average_loss_track = moving_average(loss_tracks[0], 100)
+    average_loss_track = moving_average(loss_only_tracks[0], 100)
     plotter.plot(average_loss_track)
     plotter.show()
 
@@ -455,6 +462,7 @@ def train_on_desc2code_task(session, training_data, validation_data,
     session.run(tf.global_variables_initializer())
     session.run(tf.local_variables_initializer())
     start_training_timestamp = datetime.utcnow()
+    save_path = None
     train_loss_track = []
     validation_loss_track = []
     try:
@@ -465,7 +473,7 @@ def train_on_desc2code_task(session, training_data, validation_data,
             shuffle(script_arrays)
             train_inputs, train_targets, train_input_lengths, train_target_lengths \
                 = dp.make_batches(description_arrays, script_arrays, BATCH_SIZE)
-            for batch in range((len(script_arrays) - 1) // BATCH_SIZE + 1):
+            for batch in range((len(script_arrays) - 1)//BATCH_SIZE + 1):
                 start_time = time()
                 feed_dict = model.make_train_inputs(
                     train_inputs[batch], train_input_lengths[batch], 
@@ -531,7 +539,8 @@ def train_on_desc2code_task(session, training_data, validation_data,
             print("\nValidation loss:", validation_loss)
             validation_loss_track.append(
                 (validation_loss, datetime.utcnow(), epoch, batch))
-            if min(validation_loss_track) == validation_loss:
+            if (min(eval_step[0] for eval_step in validation_loss_track) 
+                    == validation_loss):
                 print("New best validation loss.")
                 save_path = model.save(session, step)
                 print("Saved model at", save_path)
@@ -627,13 +636,13 @@ def main():
             validation_loss_track_expanded = []
             if validation_loss_track:
                 expansion_factor = len(train_loss_track) // len(validation_loss_track)
-                for loss in validation_loss_track:
-                    validation_loss_track_expanded.extend([loss]*expansion_factor)
+                for eval_step in validation_loss_track:
+                    validation_loss_track_expanded.extend([eval_step]*expansion_factor)
             storage.store_evaluation_track(run_id, "training", train_loss_track)
             storage.store_evaluation_track(run_id, "validation", validation_loss_track)
         plot_loss(train_loss_track, validation_loss_track_expanded)
-        print("\nFinal training loss:", train_loss_track[-1])
-        print("Best validation loss:", validation_loss_track[-1])
+        print("\nFinal training loss:", train_loss_track[-1][0])
+        print("Best validation loss:", validation_loss_track[-1][0])
 
 
 if __name__ == '__main__':

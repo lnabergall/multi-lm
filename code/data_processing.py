@@ -354,7 +354,7 @@ def make_batches(description_arrays, script_arrays, batch_size):
     script_batches = []
     description_batches_lengths = []
     script_batches_lengths = []
-    for i in range(len(script_arrays)//batch_size + 1):
+    for i in range((len(script_arrays) - 1)//batch_size + 1):
         description_batches_lengths.append([])
         script_batches_lengths.append([])
         descriptions = description_arrays[i*batch_size:(i+1)*batch_size]

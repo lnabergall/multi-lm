@@ -3,21 +3,22 @@ Contains classes and functions for creating, maintaining, and interacting
 with a SQLite database containing data from training runs of various models.
 """
 
+import os
 from platform import processor
 from datetime import datetime
 
-from sqlalchemy import (create_engine, Column, Table, UniqueConstraint 
+from sqlalchemy import (create_engine, Column, Table, UniqueConstraint, 
                         ForeignKey, Integer, DateTime, Text, Boolean, Float)
 from sqlalchemy.orm import sessionmaker, relationship, backref
-from sqlalchemy.orm.query import Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.declarative import declarative_base
 from psutil import virtual_memory
 from GPUtil import getGPUs
 
 
-MODEL_DIR = os.path.join(os.path.join(os.pardir, "models"), "desc2code_task")
-DATABASE_URL = "sqlite://" + os.path.join(
-    MODEL_DIR, "desc2code_training_database")
+MODEL_DIR = os.path.join(os.pardir, "models")
+DATABASE_PATH = os.path.join(MODEL_DIR, "desc2code_training_database.db")
+DATABASE_URL = "sqlite:///" + os.path.abspath(DATABASE_PATH).replace("\\\\", "/")
 Base = declarative_base()
 
 
@@ -58,6 +59,13 @@ class Model(Base):
     truncated_backprop = Column(Boolean)
     learning_rate = Column(Float)
     optimization_algorithm = Column(Text)
+
+    __table_args__ = (UniqueConstraint(
+        "description", "input_type", "output_type", "encoder_cell", 
+        "decoder_cell", "layers", "bidirectional_encoder", "attention",
+        "hidden_dimension", "encoder_vocab_size", "decoder_vocab_size",
+        "encoder_embedding_size", "decoder_embedding_size", "batch_size",
+        "truncated_backprop", "learning_rate", "optimization_algorithm"),)
 
 
 class TrainingRun(Base):
@@ -115,7 +123,7 @@ class ModelEvaluation(Base):
     training_run = relationship("TrainingRun", backref="evaluation_steps")
 
 
-def InputExample(Base):
+class InputExample(Base):
     __tablename__ = "Input_Example"
 
     input_id = Column(Integer, primary_key=True)
@@ -126,7 +134,7 @@ def InputExample(Base):
     model = relationship("Model", backref="input_examples")
 
 
-def TargetExample(Base):
+class TargetExample(Base):
     __tablename__ = "Target_Example"
 
     target_id = Column(Integer, primary_key=True)
@@ -140,7 +148,7 @@ def TargetExample(Base):
     model = relationship("Model", backref="target_examples")
 
 
-def ModelOutputExample(Base):
+class ModelOutputExample(Base):
     __tablename__ = "Model_Output_Example"
 
     output_id = Column(Integer, primary_key=True)
@@ -184,16 +192,34 @@ def store_model_info(description, input_type, output_type, encoder_cell,
     session.add(model)
     try:
         session.commit()
+    except IntegrityError as e:
+        session.rollback()
+        model_id = session.query(Model.model_id).filter(
+            Model.description == description, Model.input_type == input_type,
+            Model.output_type == output_type, Model.encoder_cell == encoder_cell,
+            Model.decoder_cell == decoder_cell, Model.layers == layers,
+            Model.bidirectional_encoder == bidirectional_encoder, 
+            Model.attention == attention, Model.hidden_dimension == hidden_dimension, 
+            Model.encoder_vocab_size == encoder_vocab_size, 
+            Model.decoder_vocab_size == decoder_vocab_size,
+            Model.encoder_embedding_size == encoder_embedding_size,
+            Model.decoder_embedding_size == decoder_embedding_size,
+            Model.batch_size == batch_size, 
+            Model.truncated_backprop == truncated_backprop, 
+            Model.learning_rate == learning_rate,
+            Model.optimization_algorithm == optimization_algorithm).scalar()
     except Exception as e:
         session.rollback()
         raise RuntimeError("Failed to store model!")
+    else:
+        model_id = model.model_id
 
-    return model.model_id
+    return model_id
 
 
 def store_model_graph_file(model_id, graph_file_path):
     session = start_session()
-    session.query.(Model).filter(Model.model_id == model_id).update(
+    session.query(Model).filter(Model.model_id == model_id).update(
         {Model.model_graph_file: graph_file_path})
     try:
         session.commit()
