@@ -83,10 +83,10 @@ class TrainingRun(Base):
     ram = Column(Integer)
 
     model_id = Column(Integer, ForeignKey("Model.model_id"))
-    model = relationship("Model", backref="training_run")
+    model = relationship("Model", backref="training_runs")
 
     dataset_id = Column(Integer, ForeignKey("Dataset_Info.dataset_id"))
-    dataset = relationship("DatasetInfo", backref="training_run")
+    dataset = relationship("DatasetInfo", backref="training_runs")
 
 
 class DatasetInfo(Base):
@@ -287,7 +287,6 @@ def store_evaluation_track(run_id, dataset_type, evaluation_track):
             epoch=epoch, batch=batch, step=step)
         model_evaluation.run_id = run_id
         session.add(model_evaluation)
-
     try:
         session.commit()
     except Exception as e:
@@ -327,9 +326,10 @@ def store_model_run(model_output_vector, model_output_text, input_id=None,
         raise RuntimeError("Failed to store model run!")
 
 
-def get_model_info(input_type=None, output_type=None, encoder_cell=None, 
-                   decoder_cell=None, layers=None, bidirectional_encoder=None,
-                   attention=None, hidden_dimension=None, encoder_vocab_size=None,
+def get_model_info(most_recent=None, input_type=None, output_type=None, 
+                   encoder_cell=None, decoder_cell=None, layers=None, 
+                   bidirectional_encoder=None, attention=None, 
+                   hidden_dimension=None, encoder_vocab_size=None,
                    decoder_vocab_size=None, encoder_embedding_size=None, 
                    decoder_embedding_size=None, batch_size=None, 
                    truncated_backprop=None, learning_rate=None, 
@@ -338,6 +338,9 @@ def get_model_info(input_type=None, output_type=None, encoder_cell=None,
                    attained_test_loss=None):
     session = start_session()
     query = session.query(Model)
+
+    if most_recent is not None:
+        return [query.order_by(Model.timestamp.desc()).all()[0],]
     if input_type is not None:
         query.filter(Model.input_type == input_type)
     if output_type is not None:
@@ -395,19 +398,13 @@ def get_training_run_info(model_id=None, model=None):
     return training_run
 
 
-def get_evaluation_track(dataset_type, model_id=None, model=None, 
-                         training_run_id=None, training_run=None):
+def get_evaluation_track(dataset_type, training_run_id=None, training_run=None):
     session = start_session()
-    if model is not None:
-        model_id = model.model_id
-        evaluation_track = session.query(ModelEvaluation).join(
-            TrainingRun).join(Model).filter(Model.model_id == model_id, 
-            Model_Evaluation.dataset_type == dataset_type).all()
-    elif training_run is not None:
+    if training_run is not None:
         training_run_id = training_run.run_id
-        evaluation_track = session.query(ModelEvaluation).join(
-            TrainingRun).filter(TrainingRun.run_id == training_run_id, 
-            Model_Evaluation.dataset_type == dataset_type).all()
+    evaluation_track = session.query(ModelEvaluation).join(
+        TrainingRun).filter(TrainingRun.run_id == training_run_id, 
+        Model_Evaluation.dataset_type == dataset_type).all()
 
     return evaluation_track
 
