@@ -42,11 +42,11 @@ def randomize_insync(*args):
 
 
 def early_stop(validation_loss_track):
-    if len(validation_loss_track) < 6:
+    if len(validation_loss_track) < 5:
         return False
     else:
-        return (min(validation_loss_track[-i][0] for i in range(1, 7)) 
-                == validation_loss_track[-6][0])
+        return (min(validation_loss_track[-i][0] for i in range(1, 6)) + .004 
+                >= validation_loss_track[-5][0])
 
 
 def moving_average(sequence, window_size):
@@ -64,6 +64,8 @@ def moving_average(sequence, window_size):
 
 
 def plot_loss(*loss_tracks, labels=None, plot_first_average=True):
+    if not loss_tracks:
+        return
     if type(loss_tracks[0][0]) != float:
         loss_only_tracks = []
         for loss_track in loss_tracks:
@@ -119,9 +121,11 @@ def get_unique_hyperparameters(models):
     return hyperparameters
 
 
-def compare_loss_tracks(dataset_type=None, only_summary=False, **kwargs):
+def compare_loss_tracks(dataset_type=None, only_summary=False, 
+                        models=None, **kwargs):
     # Get loss tracks
-    models = storage.get_model_info(**kwargs)
+    if not models:
+        models = storage.get_model_info(**kwargs)
     loss_tracks = []
     for model in models:
         training_run = storage.get_training_run_info(model=model)
@@ -179,13 +183,59 @@ def compare_loss_tracks(dataset_type=None, only_summary=False, **kwargs):
         plot_loss(*all_loss_tracks, labels=all_labels, plot_first_average=False)
 
 
+def get_model_clusters(*hyperparameters):
+    """
+    Get sets of models with all hyperparameters equivalent 
+    except for those in **kwargs.
+    """ 
+    all_models = storage.get_model_info()
+    model_clusters = []
+    for model in all_models:
+        model_dict = model.as_dict()
+        match_found = False
+        for i, model_cluster in enumerate(model_clusters):
+            match = True
+            representative = model_cluster[0].as_dict()
+            for hyperparameter in representative:
+                if (hyperparameter in hyperparameters 
+                        or hyperparameter == "model_id"
+                        or hyperparameter == "timestamp"
+                        or hyperparameter == "model_graph_file"):
+                    continue
+                if representative[hyperparameter] != model_dict[hyperparameter]:
+                    match = False
+                    break
+            if match:
+                model_clusters[i].append(model)
+                match_found = True
+        if not match_found:
+            model_clusters.append([model])
+
+    return model_clusters
+
+
+def analyze_training_run_clusters(dataset_type, *hyperparameters, 
+                                  minimal_cluster_size=None):
+    model_clusters = get_model_clusters(*hyperparameters)
+    if minimal_cluster_size:
+        model_clusters = [model_cluster for model_cluster in model_clusters 
+                          if len(model_cluster) >= minimal_cluster_size]
+    for model_cluster in model_clusters:
+        compare_loss_tracks(
+            dataset_type=dataset_type, only_summary=True, models=model_cluster)
+    plotter.show()
+
+
 def compare_recent_training_runs(dataset_type):
     timestamp = datetime.utcnow()
     timestamp = timestamp.replace(day=timestamp.day-2)
-    compare_loss_tracks(dataset_type=dataset_type, only_summary=True)
+    compare_loss_tracks(dataset_type=dataset_type, only_summary=True, 
+                        timestamp=timestamp)
     plotter.show()
 
 
 if __name__ == '__main__':
-    compare_recent_training_runs("training")
-    compare_recent_training_runs("validation")
+    analyze_training_run_clusters(
+        "training", "batch_size", minimal_cluster_size=1)
+    analyze_training_run_clusters(
+        "validation", "batch_size", minimal_cluster_size=1)
