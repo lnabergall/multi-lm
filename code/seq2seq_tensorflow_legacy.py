@@ -16,7 +16,9 @@ import tensorflow as tf
 from tensorflow.contrib.rnn import (LSTMCell, MultiRNNCell, LSTMStateTuple, 
                                     DropoutWrapper)
 from tensorflow.contrib.seq2seq import (dynamic_rnn_decoder, simple_decoder_fn_train, 
-                                        simple_decoder_fn_inference, sequence_loss)
+                                        simple_decoder_fn_inference, prepare_attention,
+                                        attention_decoder_fn_train, sequence_loss
+                                        attention_decoder_fn_inference)
 
 import data_processing as dp
 from data_processing import (PAD_VALUE, MAX_DESCRIPTION_LENGTH, 
@@ -88,6 +90,10 @@ class Seq2SeqModel():
             self._store_model_architecture(model_dir)
 
         self.saver = tf.train.Saver()
+
+    @property
+    def decoder_hidden_units(self):
+        return self.decoder_cell.output_size
 
     def _make_graph(self):
         self._init_placeholders()
@@ -213,11 +219,45 @@ class Seq2SeqModel():
                 return tf.contrib.layers.linear(
                     outputs, self.decoder_vocab_size, scope=scope)
 
-            decoder_fn_train = simple_decoder_fn_train(
-                encoder_state=self.encoder_state)
-
-            if self.attention:
-                pass    # To implement...
+            if not self.attention:
+                decoder_fn_train = simple_decoder_fn_train(
+                    encoder_state=self.encoder_state)
+                decoder_fn_inference = simple_decoder_fn_inference(
+                    output_fn=output_fn, encoder_state=self.encoder_state,
+                    embeddings=self.decoder_embedding_matrix, 
+                    start_of_sequence_id=self.EOS, end_of_sequence_id=self.EOS,
+                    maximum_length=tf.reduce_max(self.encoder_inputs_length) + 3,
+                    num_decoder_symbols=self.decoder_vocab_size)
+            else:
+                # attention_states: size [batch_size, max_time, num_units]
+                attention_states = tf.transpose(self.encoder_outputs, [1, 0, 2])
+                (attention_keys, attention_values, attention_score_fn, 
+                 attention_construct_fn) = prepare_attention(
+                    attention_states=attention_states,
+                    attention_option="bahdanau",
+                    num_units=self.decoder_hidden_units,
+                )
+                decoder_fn_train = attention_decoder_fn_train(
+                    encoder_state=self.encoder_state,
+                    attention_keys=attention_keys,
+                    attention_values=attention_values,
+                    attention_score_fn=attention_score_fn,
+                    attention_construct_fn=attention_construct_fn,
+                    name='attention_decoder'
+                )
+                decoder_fn_inference = attention_decoder_fn_inference(
+                    output_fn=output_fn,
+                    encoder_state=self.encoder_state,
+                    attention_keys=attention_keys,
+                    attention_values=attention_values,
+                    attention_score_fn=attention_score_fn,
+                    attention_construct_fn=attention_construct_fn,
+                    embeddings=self.decoder_embedding_matrix,
+                    start_of_sequence_id=self.EOS,
+                    end_of_sequence_id=self.EOS,
+                    maximum_length=tf.reduce_max(self.encoder_inputs_length) + 3,
+                    num_decoder_symbols=self.vocab_size,
+                )
 
             (self.decoder_outputs_train, self.decoder_state_train, 
              self.decoder_context_state_train) = dynamic_rnn_decoder(
@@ -232,12 +272,6 @@ class Seq2SeqModel():
 
             scope.reuse_variables()
 
-            decoder_fn_inference = simple_decoder_fn_inference(
-                output_fn=output_fn, encoder_state=self.encoder_state,
-                embeddings=self.decoder_embedding_matrix, 
-                start_of_sequence_id=self.EOS, end_of_sequence_id=self.EOS,
-                maximum_length=tf.reduce_max(self.encoder_inputs_length) + 3,
-                num_decoder_symbols=self.decoder_vocab_size)
             (self.decoder_logits_inference, self.decoder_state_inference, 
              self.decoder_context_state_inference) = dynamic_rnn_decoder(
                 cell=self.decoder_cell, decoder_fn=decoder_fn_inference,
@@ -621,7 +655,8 @@ def train_model(plot_losses=True, training_description_count=0,
             plotter.show()
         print("\nFinal training loss:", train_loss_track[-1][0])
         if validation_loss_track:
-            print("Best validation loss:", validation_loss_track[-1][0])
+            print("Best validation loss:", 
+                  min(eval_step[0] for eval_step in validation_loss_track))
 
 
 if __name__ == '__main__':
