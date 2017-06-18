@@ -625,8 +625,8 @@ def train_model(plot_losses=True, training_description_count=0,
 
 
 if __name__ == '__main__':
-    hidden_dimensions = [75, 150, 225, 300, 375]
-    for hidden_dim in hidden_dimensions:
-        with open("train_run_log_hd" + str(hidden_dim) + ".txt", "w") as log_file:
+    batch_sizes = [8, 16, 32, 64, 128]
+    for batch_size in batch_sizes:
+        with open("train_run_log_bs" + str(batch_size) + ".txt", "w") as log_file:
             sys.stdout = log_file
-            train_model(plot_losses=False, hidden_dim=hidden_dim)
+            train_model(plot_losses=False, batch_size=batch_size)
