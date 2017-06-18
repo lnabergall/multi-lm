@@ -1,5 +1,7 @@
 """Helper functions for modifying, analyzing, and visualizing data."""
 
+from datetime import datetime
+
 import numpy as np
 import matplotlib.pyplot as plotter
 
@@ -96,18 +98,41 @@ def get_model_file_paths(**kwargs):
             for model in models for run in model.training_runs]
 
 
-def compare_loss_tracks(dataset_type=None, **kwargs):
+def get_unique_hyperparameters(models):
+    hyperparameters = {}
+    hyperparameter_sets = {}
+    for model in models:
+        hyperparameters[model.model_id] = model.as_dict()
+        del hyperparameters[model.model_id]["model_id"]
+        del hyperparameters[model.model_id]["timestamp"]
+        del hyperparameters[model.model_id]["model_graph_file"]
+        for hyperparameter in hyperparameters[model.model_id]:
+            values = hyperparameter_sets.get(hyperparameter, set())
+            values.add(hyperparameters[model.model_id][hyperparameter])
+            hyperparameter_sets[hyperparameter] = values
+
+    for hyperparameter in hyperparameter_sets:
+        if len(hyperparameter_sets[hyperparameter]) == 1:
+            for model in models:
+                del hyperparameters[model.model_id][hyperparameter]
+
+    return hyperparameters
+
+
+def compare_loss_tracks(dataset_type=None, only_summary=False, **kwargs):
     # Get loss tracks
     models = storage.get_model_info(**kwargs)
     loss_tracks = []
     for model in models:
-        training_run = get_training_run_info(model=model)
+        training_run = storage.get_training_run_info(model=model)
+        if training_run is None:
+            continue
         if dataset_type is None:
-            training_evaluation_track = get_evaluation_track(
+            training_evaluation_track = storage.get_evaluation_track(
                 "training", training_run=training_run)
-            validation_evaluation_track = get_evaluation_track(
+            validation_evaluation_track = storage.get_evaluation_track(
                 "validation", training_run=training_run)
-            test_evaluation_track = get_evaluation_track(
+            test_evaluation_track = storage.get_evaluation_track(
                 "test", training_run=training_run)
             training_loss_track = [
                 model_eval.loss for model_eval in training_evaluation_track]
@@ -115,27 +140,52 @@ def compare_loss_tracks(dataset_type=None, **kwargs):
                 model_eval.loss for model_eval in validation_evaluation_track]
             test_loss_track = [
                 model_eval.loss for model_eval in test_evaluation_track]
-            loss_tracks.append(
-                (training_loss_track, validation_loss_track, test_loss_track))
+            loss_tracks.append((model.model_id, 
+                (training_loss_track, validation_loss_track, test_loss_track)))
         else:
-            evaluation_track = get_evaluation_track(
+            evaluation_track = storage.get_evaluation_track(
                 dataset_type, training_run=training_run)
             loss_track = [model_eval.loss for model_eval in evaluation_track]
-            loss_tracks.append((loss_track, [], []))
+            if dataset_type == "training":
+                loss_tracks.append((model.model_id, (loss_track, [], [])))
+            elif dataset_type == "validation":
+                loss_tracks.append((model.model_id, ([], loss_track, [])))
+            elif dataset_type == "test":
+                loss_tracks.append((model.model_id, ([], [], loss_track)))
+
+    unique_hyperparameters = get_unique_hyperparameters(models)
 
     # Plot loss tracks in separate figures
     all_loss_tracks = []
     all_labels = []
-    for i, loss_track_tuple in enumerate(loss_tracks):
-        labels = ("Model " + str(model.id) + " training loss", 
-                  "Model " + str(model.id) + " validation loss", 
-                  "Model " + str(model.id) + " test loss")
-        loss_tracks = [loss_track for loss_track in loss_track_tuple if loss_track]
-        labels = [label for i, label in enumerate(labels) if loss_track_tuple[i]]
-        plot_loss(*loss_tracks, labels=labels, plot_first_average=False)
+    for loss_track_tuple in loss_tracks:
+        model_id = loss_track_tuple[0]
+        labels = ["Model " + str(model_id) + " training loss", 
+                  "Model " + str(model_id) + " validation loss", 
+                  "Model " + str(model_id) + " test loss"]
+        for hyperparameter, value in unique_hyperparameters[model_id].items():
+            for i, label in enumerate(labels):
+                label += " - " + hyperparameter + " " + str(value)
+                labels[i] = label.replace("_", " ")
+        loss_tracks = [loss_track for loss_track in loss_track_tuple[1] if loss_track]
+        labels = [label for i, label in enumerate(labels) if loss_track_tuple[1][i]]
+        if not only_summary:
+            plot_loss(*loss_tracks, labels=labels, plot_first_average=False)
         all_loss_tracks.extend(loss_tracks)
-        all_labels.extend(all_labels)
+        all_labels.extend(labels)
 
     # If single dataset type, include summary plot
     if dataset_type:
         plot_loss(*all_loss_tracks, labels=all_labels, plot_first_average=False)
+
+
+def compare_recent_training_runs(dataset_type):
+    timestamp = datetime.utcnow()
+    timestamp = timestamp.replace(day=timestamp.day-2)
+    compare_loss_tracks(dataset_type=dataset_type, only_summary=True)
+    plotter.show()
+
+
+if __name__ == '__main__':
+    compare_recent_training_runs("training")
+    compare_recent_training_runs("validation")
