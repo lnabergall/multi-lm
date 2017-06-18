@@ -10,6 +10,7 @@ from datetime import datetime
 from sqlalchemy import (create_engine, Column, Table, UniqueConstraint, 
                         ForeignKey, Integer, DateTime, Text, Boolean, Float)
 from sqlalchemy.orm import sessionmaker, relationship, backref
+from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.declarative import declarative_base
 from psutil import virtual_memory
@@ -66,6 +67,30 @@ class Model(Base):
         "hidden_dimension", "encoder_vocab_size", "decoder_vocab_size",
         "encoder_embedding_size", "decoder_embedding_size", "batch_size",
         "truncated_backprop", "learning_rate", "optimization_algorithm"),)
+
+    def as_dict(self):
+        return {
+            "model_id": self.model_id,
+            "timestamp": self.timestamp,
+            "model_graph_file": self.model_graph_file,
+            "description": self.description,
+            "input_type": self.input_type,
+            "output_type": self.output_type,
+            "encoder_cell": self.encoder_cell,
+            "decoder_cell": self.decoder_cell,
+            "layers": self.layers,
+            "bidirectional_encoder": self.bidirectional_encoder,
+            "attention": self.attention,
+            "hidden_dimension": self.hidden_dimension,
+            "encoder_vocab_size": self.encoder_vocab_size,
+            "decoder_vocab_size": self.decoder_vocab_size,
+            "encoder_embedding_size": self.encoder_embedding_size,
+            "decoder_embedding_size": self.decoder_embedding_size,
+            "batch_size": self.batch_size,
+            "truncated_backprop": self.truncated_backprop,
+            "learning_rate": self.learning_rate,
+            "optimization_algorithm": self.optimization_algorithm,
+        }
 
 
 class TrainingRun(Base):
@@ -393,8 +418,12 @@ def get_training_run_info(model_id=None, model=None):
     session = start_session()
     if model is not None:
         model_id = model.model_id
-    training_run = session.query(TrainingRun).filter(
-        TrainingRun.model_id == model_id).one()
+    try:
+        training_run = session.query(TrainingRun).filter(
+            TrainingRun.model_id == model_id).one()
+    except NoResultFound:
+        training_run = None
+
     return training_run
 
 
@@ -404,7 +433,7 @@ def get_evaluation_track(dataset_type, training_run_id=None, training_run=None):
         training_run_id = training_run.run_id
     evaluation_track = session.query(ModelEvaluation).join(
         TrainingRun).filter(TrainingRun.run_id == training_run_id, 
-        Model_Evaluation.dataset_type == dataset_type).all()
+        ModelEvaluation.dataset_type == dataset_type).all()
 
     return evaluation_track
 
