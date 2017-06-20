@@ -1,5 +1,6 @@
 """Helper functions for modifying, analyzing, and visualizing data."""
 
+import re
 from datetime import datetime
 
 import numpy as np
@@ -100,6 +101,28 @@ def get_model_file_paths(**kwargs):
             for model in models for run in model.training_runs]
 
 
+def filtered_by_trained(models):
+    trained_models = []
+    for model in models:
+        latest_training_run = storage.get_latest_training_run(model=model)
+        if latest_training_run:
+            loss_track = storage.get_evaluation_track(
+                "training", training_run=latest_training_run)
+            if len(loss_track) >= 100:
+                trained_models.append(model)
+
+    return trained_models
+
+
+def get_optimizer_label(optimizer_string):
+    possible_labels = re.findall(r"[a-zA-Z]+", optimizer_string) 
+    for label in possible_labels:
+        if "Optimizer" in label:
+            optimizer_label = label
+            break
+    return optimizer_label
+
+
 def get_unique_hyperparameters(models):
     hyperparameters = {}
     hyperparameter_sets = {}
@@ -121,16 +144,31 @@ def get_unique_hyperparameters(models):
     return hyperparameters
 
 
+def make_labels(models):
+    unique_hyperparameters = get_unique_hyperparameters(models)
+    labels = []
+    for model in models:
+        model_id = model.model_id
+        label = "Model " + str(model_id)
+        for hyperparameter, value in unique_hyperparameters[model_id].items():
+            if type(value) == str and "optimizer" in value.lower():
+                value = get_optimizer_label(value)
+            label += " - " + hyperparameter + " " + str(value)
+            label = label.replace("_", " ")
+        labels.append(label)
+
+    return labels
+
+
 def compare_loss_tracks(dataset_type=None, only_summary=False, 
                         models=None, **kwargs):
     # Get loss tracks
     if not models:
         models = storage.get_model_info(**kwargs)
+    models = filtered_by_trained(models)
     loss_tracks = []
     for model in models:
-        training_run = storage.get_training_run_info(model=model)
-        if training_run is None:
-            continue
+        training_run = storage.get_latest_training_run(model=model)
         if dataset_type is None:
             training_evaluation_track = storage.get_evaluation_track(
                 "training", training_run=training_run)
@@ -157,26 +195,22 @@ def compare_loss_tracks(dataset_type=None, only_summary=False,
             elif dataset_type == "test":
                 loss_tracks.append((model.model_id, ([], [], loss_track)))
 
-    unique_hyperparameters = get_unique_hyperparameters(models)
+    labels = make_labels(models)
 
     # Plot loss tracks in separate figures
     all_loss_tracks = []
     all_labels = []
-    for loss_track_tuple in loss_tracks:
-        model_id = loss_track_tuple[0]
-        labels = ["Model " + str(model_id) + " training loss", 
-                  "Model " + str(model_id) + " validation loss", 
-                  "Model " + str(model_id) + " test loss"]
-        for hyperparameter, value in unique_hyperparameters[model_id].items():
-            for i, label in enumerate(labels):
-                label += " - " + hyperparameter + " " + str(value)
-                labels[i] = label.replace("_", " ")
+    for loss_track_tuple, model_label in zip(loss_tracks, labels):
+        track_labels = [model_label + ": training loss", 
+                        model_label + ": validation loss", 
+                        model_label + ": test loss"]
         loss_tracks = [loss_track for loss_track in loss_track_tuple[1] if loss_track]
-        labels = [label for i, label in enumerate(labels) if loss_track_tuple[1][i]]
+        track_labels = [label for i, label in enumerate(track_labels) 
+                        if loss_track_tuple[1][i]]
         if not only_summary:
-            plot_loss(*loss_tracks, labels=labels, plot_first_average=False)
+            plot_loss(*loss_tracks, labels=track_labels, plot_first_average=False)
         all_loss_tracks.extend(loss_tracks)
-        all_labels.extend(labels)
+        all_labels.extend(track_labels)
 
     # If single dataset type, include summary plot
     if dataset_type:
@@ -214,15 +248,28 @@ def get_model_clusters(*hyperparameters):
     return model_clusters
 
 
+def output_training_times(models):
+    labels = make_labels(models)
+    for model, label in zip(models, labels):
+        training_run = storage.get_latest_training_run(model=model)
+        duration = abs(training_run.begin_timestamp.timestamp() 
+                       - training_run.end_timestamp.timestamp())
+        print(label + ": duration", duration, "seconds")
+
+
 def analyze_training_run_clusters(dataset_type, *hyperparameters, 
-                                  minimal_cluster_size=None):
+                                  minimal_cluster_size=None, 
+                                  analyze="loss_tracks"):
     model_clusters = get_model_clusters(*hyperparameters)
     if minimal_cluster_size:
         model_clusters = [model_cluster for model_cluster in model_clusters 
                           if len(model_cluster) >= minimal_cluster_size]
     for model_cluster in model_clusters:
-        compare_loss_tracks(
-            dataset_type=dataset_type, only_summary=True, models=model_cluster)
+        if analyze == "loss_tracks":
+            compare_loss_tracks(dataset_type=dataset_type, 
+                                only_summary=True, models=model_cluster)
+        elif analyze == "training_time":
+            output_training_times(model_cluster)
     plotter.show()
 
 
@@ -235,7 +282,18 @@ def compare_recent_training_runs(dataset_type):
 
 
 if __name__ == '__main__':
-    analyze_training_run_clusters(
-        "training", "batch_size", minimal_cluster_size=1)
-    analyze_training_run_clusters(
-        "validation", "batch_size", minimal_cluster_size=1)
+    pass
+    # compare_loss_tracks(dataset_type="training", only_summary=True, 
+    #                     learning_rate=0.001)
+    # compare_loss_tracks(dataset_type="validation", only_summary=True, 
+    #                     learning_rate=0.001)
+    # plotter.show()
+    # analyze_training_run_clusters(
+    #     "training", "optimization_algorithm", 
+    #     minimal_cluster_size=3, analyze="training_time")
+    # analyze_training_run_clusters(
+    #     "training", "optimization_algorithm", 
+    #     minimal_cluster_size=3)
+    # analyze_training_run_clusters(
+    #     "validation", "optimization_algorithm", 
+    #     minimal_cluster_size=3)
