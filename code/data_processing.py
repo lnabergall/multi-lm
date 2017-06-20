@@ -19,6 +19,20 @@ MAX_DESCRIPTION_LENGTH = 4244
 MAX_SCRIPT_LENGTH = 1500
 
 
+def detect_language(code_text):
+    # Note: could be Java too apparently, but focuses on  
+    # correctly classifying Python code for now.
+    if ("#include" in code_text or "int main" in code_text 
+            or "void main" in code_text or "for(" in code_text 
+            or "for (" in code_text or "public class" in code_text
+            or "public static" in code_text or "java." in code_text):
+        language = "c++"
+    else:
+        language = "python"
+
+    return language
+
+
 def get_data():
     """
     Fetch all data, producing a dictionary of natural language descriptions
@@ -30,9 +44,12 @@ def get_data():
     for path, dir_names, file_names in os.walk(data_path):
         path_parts = os.path.split(path)
         if path_parts[1] in ["description", "solutions_c++", "solutions_python"]:
+            with open(os.path.join(path_parts[0], "part_of.txt"), "r") as dataset_file:
+                dataset_assignment = dataset_file.read().strip()
             problem_id = os.path.split(path_parts[0])[1]
             data_by_problem.setdefault(
-                problem_id, {"description": "", "c++": [], "python": []})
+                problem_id, {"dataset_assignment": dataset_assignment, 
+                             "description": "", "c++": [], "python": []})
         if path_parts[1] == "description":
             for file_name in file_names:
                 with open(os.path.join(path, file_name), "r", encoding="utf8") as desc_file:
@@ -44,18 +61,27 @@ def get_data():
                 with open(os.path.join(path, file_name), "r", 
                           encoding="latin-1") as code_file:
                     code = code_file.read()
-                    data_by_problem[problem_id]["c++"].append(code)
+                    language = detect_language(code)
+                    if code and language == "c++":
+                        data_by_problem[problem_id]["c++"].append(code)
+                    elif code and language == "python":
+                        data_by_problem[problem_id]["python"].append(code)
         elif path_parts[1] == "solutions_python":
             problem_id = os.path.split(path_parts[0])[1]
             for file_name in file_names:
                 with open(os.path.join(path, file_name), "r", 
                           encoding="latin-1") as code_file:
                     code = code_file.read()
-                    data_by_problem[problem_id]["python"].append(code)
+                    language = detect_language(code)
+                    if code and language == "python":
+                        data_by_problem[problem_id]["python"].append(code)
+                    elif code and language == "c++":
+                        data_by_problem[problem_id]["c++"].append(code)
     data = {}
     for problem_id in data_by_problem:
         description = data_by_problem[problem_id]["description"]
         code_dict = {
+            "dataset_assignment": data_by_problem[problem_id]["dataset_assignment"],
             "c++": data_by_problem[problem_id]["c++"], 
             "python": data_by_problem[problem_id]["python"],
         }
@@ -94,15 +120,26 @@ def split_processed_data(processed_data_dict):
     training_data = {}
     validation_data = {}
     test_data = {}
-    random_descs = list(processed_data_dict["data"].keys())
-    shuffle(random_descs)
-    for i, description in enumerate(random_descs):
-        if i < training_size:
-            training_data[description] = processed_data_dict["data"][description]
-        elif training_size <= i < training_size + validation_size:
-            validation_data[description] = processed_data_dict["data"][description]
-        else:
-            test_data[description] = processed_data_dict["data"][description]
+    if "dataset_assignment" in processed_data_dict["data"][
+            list(processed_data_dict["data"].keys())[0]]:
+        for i, description in enumerate(processed_data_dict["data"]):
+            assignment = processed_data_dict["data"][description]["dataset_assignment"]
+            if assignment == "training":
+                training_data[description] = processed_data_dict["data"][description]
+            elif assignment == "validation":
+                validation_data[description] = processed_data_dict["data"][description]
+            elif assignment == "test":
+                test_data[description] = processed_data_dict["data"][description]
+    else:
+        random_descs = list(processed_data_dict["data"].keys())
+        shuffle(random_descs)
+        for i, description in enumerate(random_descs):
+            if i < training_size:
+                training_data[description] = processed_data_dict["data"][description]
+            elif training_size <= i < training_size + validation_size:
+                validation_data[description] = processed_data_dict["data"][description]
+            else:
+                test_data[description] = processed_data_dict["data"][description]
 
     return training_data, validation_data, test_data
 
