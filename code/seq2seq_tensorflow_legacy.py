@@ -5,6 +5,7 @@ using tf.contrib.seq2seq from tensorflow 1.0.
 
 import os
 import sys
+import re
 from math import sqrt, isnan
 from time import time
 from datetime import datetime
@@ -17,7 +18,7 @@ from tensorflow.contrib.rnn import (LSTMCell, MultiRNNCell, LSTMStateTuple,
                                     DropoutWrapper)
 from tensorflow.contrib.seq2seq import (dynamic_rnn_decoder, simple_decoder_fn_train, 
                                         simple_decoder_fn_inference, prepare_attention,
-                                        attention_decoder_fn_train, sequence_loss
+                                        attention_decoder_fn_train, sequence_loss,
                                         attention_decoder_fn_inference)
 
 import data_processing as dp
@@ -34,9 +35,9 @@ COPY_TASK = False
 ENCODER_VOCAB_SIZE = 0
 DECODER_VOCAB_SIZE = 0
 HIDDEN_DIM = 200
-LEARNING_RATE = 0.005
+LEARNING_RATE = 0.001
 BACKPROP_TIMESTEPS = 50
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 EPOCHS = 50
 OPTIMIZER = tf.train.RMSPropOptimizer(LEARNING_RATE)
 
@@ -53,9 +54,33 @@ class Seq2SeqModel():
                  decoder_embedding_size, hidden_dim=HIDDEN_DIM, 
                  batch_size=BATCH_SIZE, learning_rate=LEARNING_RATE, 
                  optimizer=OPTIMIZER, bidirectional=False, attention=False, 
-                 layers=1, model_dir=MODEL_DIR, graph=None):
+                 layers=1, model_dir=MODEL_DIR, graph=None, model=None):
         self.graph = graph
         if self.graph:
+            self.model_id = model.model_id
+            self.model_graph_file = model.model_graph_file
+
+            self.description = model.description
+            self.input_description = model.input_type
+            self.output_description = model.output_type
+
+            self.encoder_cell = model.encoder_cell
+            self.decoder_cell = model.decoder_cell
+            self.layers = model.layers
+            self.bidirectional = model.bidirectional_encoder
+            self.attention = model.attention
+
+            self.hidden_dim = model.hidden_dimension
+            self.encoder_vocab_size = model.encoder_vocab_size
+            self.decoder_vocab_size = model.decoder_vocab_size
+            self.encoder_embedding_size = model.encoder_embedding_size
+            self.decoder_embedding_size = model.decoder_embedding_size
+
+            self.batch_size = model.batch_size
+            self.truncated_backprop = model.truncated_backprop
+            self.learning_rate = model.learning_rate
+            self.optimizer = optimization_algorithm
+
             self._init_placeholders()
         else:
             if layers == 1:
@@ -77,9 +102,9 @@ class Seq2SeqModel():
             self.encoder_embedding_size = encoder_embedding_size
             self.decoder_embedding_size = decoder_embedding_size
 
+            self.layers = layers
             self.bidirectional = bidirectional
             self.attention = attention
-            self.layers = layers
 
             self.batch_size = batch_size
             self.truncated_backprop = False
@@ -235,16 +260,14 @@ class Seq2SeqModel():
                  attention_construct_fn) = prepare_attention(
                     attention_states=attention_states,
                     attention_option="bahdanau",
-                    num_units=self.decoder_hidden_units,
-                )
+                    num_units=self.decoder_hidden_units)
                 decoder_fn_train = attention_decoder_fn_train(
                     encoder_state=self.encoder_state,
                     attention_keys=attention_keys,
                     attention_values=attention_values,
                     attention_score_fn=attention_score_fn,
                     attention_construct_fn=attention_construct_fn,
-                    name='attention_decoder'
-                )
+                    name="attention_decoder")
                 decoder_fn_inference = attention_decoder_fn_inference(
                     output_fn=output_fn,
                     encoder_state=self.encoder_state,
@@ -256,8 +279,7 @@ class Seq2SeqModel():
                     start_of_sequence_id=self.EOS,
                     end_of_sequence_id=self.EOS,
                     maximum_length=tf.reduce_max(self.encoder_inputs_length) + 3,
-                    num_decoder_symbols=self.vocab_size,
-                )
+                    num_decoder_symbols=self.vocab_size)
 
             (self.decoder_outputs_train, self.decoder_state_train, 
              self.decoder_context_state_train) = dynamic_rnn_decoder(
@@ -276,6 +298,8 @@ class Seq2SeqModel():
              self.decoder_context_state_inference) = dynamic_rnn_decoder(
                 cell=self.decoder_cell, decoder_fn=decoder_fn_inference,
                 time_major=True, scope=scope)
+            self.decoder_logits_inference = tf.identity(
+                self.decoder_logits_inference, name="decoder_logits_inference")
             self.decoder_prediction_inference = tf.argmax(
                 self.decoder_logits_inference, axis=-1, 
                 name="decoder_prediction_inference")
@@ -284,8 +308,8 @@ class Seq2SeqModel():
         logits = tf.transpose(self.decoder_logits_train, [1, 0, 2])
         targets = tf.transpose(self.decoder_train_targets, [1, 0])
         self.loss = sequence_loss(logits=logits, targets=targets,
-                                  weights=self.loss_weights)
-        self.train_op = self.optimizer.minimize(self.loss)
+                                  weights=self.loss_weights, name="sequence_loss")
+        self.train_op = self.optimizer.minimize(self.loss, name="train_op")
 
     def initialize_train_inputs(self, session, inputs, inputs_length, 
                                 targets, targets_length):
@@ -353,18 +377,36 @@ class Seq2SeqModel():
             print("\nOptimization algorithm:", type(self.optimizer), file=file)
 
     def save(self, session, step):
-        if not hasattr(self, "model_save_path"):
-            self.model_save_path = (
-                os.path.join(self.model_dir, "desc2code_model") 
-                + "-" + str(step) + ".meta")
-            storage.store_model_graph_file(self.model_id, self.model_save_path)
+        self.model_save_path = (
+            os.path.join(self.model_dir, "desc2code_model") 
+            + "-" + str(step) + ".meta")
+        storage.store_model_graph_file(self.model_id, self.model_save_path)
         checkpoint_path = self.saver.save(
             session, os.path.join(self.model_dir, "desc2code_model"), 
             global_step=step)
         return checkpoint_path
 
-    def load(self, session):
-        pass
+    def load(self):
+        self.decoder_prediction_train = self.graph.get_tensor_by_name(
+            "decoder_prediction_train:0")
+        self.decoder_logits_inference = self.graph.get_tensor_by_name(
+            "decoder_logits_inference:0")
+        self.decoder_prediction_inference = self.graph.get_tensor_by_name(
+            "decoder_prediction_inference:0")
+        self.loss = self.graph.get_tensor_by_name("sequence_loss:0")
+        self.train_op = self.graph.get_tensor_by_name("train_op:0")
+
+    def infer(self, input_array):
+        start_time = time()
+        if input_array.dim == 1:
+            # Assumes row vector input
+            input_array = np.reshape(input_array, (-1, 1))
+        elif input_array.shape[0] == 1:
+            input_array = np.transpose(input_array)
+        feed_dict = self.make_inference_inputs(input_array, [input_array.shape[0]])
+        prediction = session.run([self.decoder_prediction_inference], feed_dict)
+        duration = time() - start_time
+        return prediction, duration
 
 
 def train_on_copy_task(session, length_from=3, length_to=8, vocab_lower=2, 
@@ -437,10 +479,11 @@ def train_on_copy_task(session, length_from=3, length_to=8, vocab_lower=2,
 
 
 def train_on_desc2code_task(session, training_data, validation_data, 
-                            description_chars, script_chars, hidden_dim=HIDDEN_DIM,
-                            attention=False, bidirectional=False,
-                            batch_size=BATCH_SIZE, epochs=EPOCHS, 
-                            learning_rate=LEARNING_RATE, optimizer=OPTIMIZER):
+                            description_chars, script_chars, layers=1, 
+                            hidden_dim=HIDDEN_DIM, attention=False, 
+                            bidirectional=False, batch_size=BATCH_SIZE, 
+                            epochs=EPOCHS, learning_rate=LEARNING_RATE, 
+                            optimizer=OPTIMIZER):
     model_dir = os.path.join(MODEL_DIR, "desc2code_task")
 
     print("\nVectorizing data...")
@@ -459,6 +502,7 @@ def train_on_desc2code_task(session, training_data, validation_data,
                          decoder_vocab_size=script_values_count,
                          encoder_embedding_size=description_values_count,
                          decoder_embedding_size=script_values_count,
+                         layers=layers,
                          hidden_dim=hidden_dim, 
                          batch_size=batch_size,
                          learning_rate=learning_rate,
@@ -587,21 +631,70 @@ def validate_on_desc2code_task(session, model, validation_data,
     return loss, validation_targets, logits, prediction
 
 
-def load(model, run):
+def load_model(session, stored_model, stored_run):
+    saver = tf.train.import_meta_graph(stored_model.model_graph_file)
+    saver.restore(session, stored_run.model_parameters_file)
+    session.run(tf.global_variables_initializer())
+    session.run(tf.local_variables_initializer())
+    graph = tf.get_default_graph()
+    model = Seq2SeqModel(graph=graph)
+    model.load()
+
+    return model
+
+
+def perform_inference(session, model, input_strings, target_strings, 
+                      description_chars, script_chars):
+    vectorized_inputs = []
+    vectorized_targets = []
+    for input_string, target_string in zip(input_strings, target_strings):
+        input_array, target_array = dp.vectorize_example(
+            input_string, target_string, description_chars, script_chars)
+        vectorized_inputs.append(input_array)
+        vectorized_targets.append(target_array)
+
+    predictions = []
+    total_duration = 0
+    for input_array in vectorized_inputs:
+        prediction, duration = model.infer(input_array)
+        prediction_text = dp.devectorize(prediction, "script", 
+                                         description_chars, script_chars)
+        predictions.append(prediction_text)
+        total_duration += duration
+
+    return predictions, total_duration
+
+
+def infer_using_model(stored_model, stored_run):
+    print("\nFetching data...")
+    data = dp.get_data()
+    print("\nProcessing data...")
+    processed_data = dp.process_data(data)
+    description_chars = processed_data["description_char_counts"]
+    script_chars = processed_data["python_char_counts"]
+    input_strings = []
+    target_strings = []
+    for i, description in enumerate(processed_data["validation_data"]):
+        if i < 5:
+            script = processed_data["validation_data"][description]["python"][0]
+            input_strings.append(description)
+            target_strings.append(script)
+
     tf.reset_default_graph()
     tf.set_random_seed(1)
     with tf.Session() as session:
-        saver = tf.train.import_meta_graph(model.model_graph_file)
-        saver.restore(session, run.model_parameters_file)
-        session.run(tf.global_variables_initializer())
-        session.run(tf.local_variables_initializer())
-        graph = tf.get_default_graph()
-        model = Seq2SeqModel(graph=graph)
+        model = load_model(session, stored_model, stored_run)
+        predictions, duration = perform_inference(
+            session, model, input_strings, target_strings,
+            description_chars, script_chars)
 
-    return session, model
+    for input_string, target_string, prediction in zip(
+            input_strings, target_strings, predictions):
+        storage.store_model_run(prediction, input_text=input_string, 
+                                target_text=target_string, model=model)
 
 
-def train_model(plot_losses=True, training_description_count=0, 
+def train_model(plot_losses=True, training_description_count=0, layers=1,
                 hidden_dim=HIDDEN_DIM, attention=False, bidirectional=False, 
                 batch_size=BATCH_SIZE, epochs=EPOCHS, learning_rate=LEARNING_RATE, 
                 optimizer=OPTIMIZER):
@@ -633,7 +726,7 @@ def train_model(plot_losses=True, training_description_count=0,
             (model, train_loss_track, validation_loss_track, 
              parameters_file_path, start_training_timestamp) = train_on_desc2code_task(
                 session, training_data_dict, validation_data_dict, 
-                description_chars, script_chars, hidden_dim=hidden_dim, 
+                description_chars, script_chars, layers=layers, hidden_dim=hidden_dim, 
                 attention=attention, bidirectional=bidirectional,
                 batch_size=batch_size, epochs=epochs, learning_rate=learning_rate, 
                 optimizer=optimizer)
@@ -660,8 +753,16 @@ def train_model(plot_losses=True, training_description_count=0,
 
 
 if __name__ == '__main__':
-    batch_sizes = [8, 16, 32, 64, 128]
-    for batch_size in batch_sizes:
-        with open("train_run_log_bs" + str(batch_size) + ".txt", "w") as log_file:
+    # stored_model = storage.get_model_info(
+    #     batch_size=32, learning_rate=0.005, 
+    #     optimization_algorithm=str(type(tf.train.RMSPropOptimizer(0.005))))[-1]
+    # stored_run = storage.get_latest_training_run(model=stored_model)
+    # infer_using_model(stored_model, stored_run)
+    optimizers = [tf.train.RMSPropOptimizer(LEARNING_RATE),
+                  tf.train.AdamOptimizer(LEARNING_RATE), 
+                  tf.train.FtrlOptimizer(.2)]
+    labels = [helper.get_optimizer_label(str(optimizer)) for optimizer in optimizers]
+    for i, optimizer in enumerate(optimizers):
+        with open("train_run_log_op_" + labels[i] + "_2.txt", "w") as log_file:
             sys.stdout = log_file
-            train_model(plot_losses=False, batch_size=batch_size)
+            train_model(plot_losses=False, optimizer=optimizer)
