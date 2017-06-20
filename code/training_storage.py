@@ -258,7 +258,7 @@ def store_training_run(model_id, parameters_file_path, begin_timestamp,
                        smallest_input_length, largest_input_length, 
                        output_sequences, average_output_length, 
                        smallest_output_length, largest_output_length, 
-                       end_timestamp=datetime.utcnow(), used_gpus=1, 
+                       end_timestamp=None, used_gpus=1, 
                        cpu=None, gpu=None, ram=None, training_fraction=0.8, 
                        validation_fraction=0.1):
     if cpu is None:
@@ -267,6 +267,8 @@ def store_training_run(model_id, parameters_file_path, begin_timestamp,
         ram = int(round(virtual_memory().total / 1024**3))
     if gpu is None:
         gpu = getGPUs()[0].name
+    if end_timestamp is None:
+        end_timestamp = datetime.utcnow()
 
     session = start_session()
     
@@ -319,18 +321,17 @@ def store_evaluation_track(run_id, dataset_type, evaluation_track):
         raise RuntimeError("Failed to store evaluation track!")
 
 
-def store_model_run(model_output_vector, model_output_text, input_id=None, 
-                    input_vector=None, input_text=None, target_vector=None, 
-                    target_text=None, model=None, model_id=None):
+def store_model_run(model_output_text, input_id=None, input_vector=None, 
+                    input_text=None, target_vector=None, target_text=None, 
+                    model=None, model_id=None):
     session = start_session()
     if model is not None:
         model_id = model.model_id
 
-    output_example = ModelOutputExample(vector=model_output_vector,
-                                        text=model_output_text)
+    output_example = ModelOutputExample(text=model_output_text)
     if input_id is not None:
         output_example.input_id = input_id
-    elif input_vector is not None and input_text is not None:
+    elif input_text is not None:
         input_example = InputExample(vector=input_vector, text=input_text)
         input_example.model_id = model_id
         session.add(input_example)
@@ -338,7 +339,7 @@ def store_model_run(model_output_vector, model_output_text, input_id=None,
         input_id = input_example.input_id
         output_example.input_id = input_id
 
-    if target_vector is not None and target_text is not None:
+    if target_text is not None:
         target_example = TargetExample(vector=target_vector, text=target_text,
                                        model_id=model_id, input_id=input_id)
         session.add(target_example)
@@ -367,61 +368,62 @@ def get_model_info(most_recent=None, input_type=None, output_type=None,
     if most_recent is not None:
         return [query.order_by(Model.timestamp.desc()).all()[0],]
     if input_type is not None:
-        query.filter(Model.input_type == input_type)
+        query = query.filter(Model.input_type == input_type)
     if output_type is not None:
-        query.filter(Model.output_type == output_type)
+        query = query.filter(Model.output_type == output_type)
     if encoder_cell is not None:
-        query.filter(Model.encoder_cell == encoder_cell)
+        query = query.filter(Model.encoder_cell == encoder_cell)
     if decoder_cell is not None:
-        query.filter(Model.decoder_cell == decoder_cell)
+        query = query.filter(Model.decoder_cell == decoder_cell)
     if layers is not None:
-        query.filter(Model.layers == layers)
+        query = query.filter(Model.layers == layers)
     if bidirectional_encoder is not None:
-        query.filter(Model.bidirectional_encoder == bidirectional_encoder)
+        query = query.filter(Model.bidirectional_encoder == bidirectional_encoder)
     if attention is not None:
-        query.filter(Model.attention == attention)
+        query = query.filter(Model.attention == attention)
     if hidden_dimension is not None:
-        query.filter(Model.hidden_dimension == hidden_dimension)
+        query = query.filter(Model.hidden_dimension == hidden_dimension)
     if encoder_vocab_size is not None:
-        query.filter(Model.encoder_vocab_size == encoder_vocab_size)
+        query = query.filter(Model.encoder_vocab_size == encoder_vocab_size)
     if decoder_vocab_size is not None:
-        query.filter(Model.decoder_vocab_size == decoder_vocab_size)
+        query = query.filter(Model.decoder_vocab_size == decoder_vocab_size)
     if encoder_embedding_size is not None:
-        query.filter(Model.encoder_embedding_size == encoder_embedding_size)
+        query = query.filter(Model.encoder_embedding_size == encoder_embedding_size)
     if batch_size is not None:
-        query.filter(Model.batch_size == batch_size)
+        query = query.filter(Model.batch_size == batch_size)
     if truncated_backprop is not None:
-        query.filter(Model.truncated_backprop == truncated_backprop)
+        query = query.filter(Model.truncated_backprop == truncated_backprop)
     if learning_rate is not None:
-        query.filter(Model.learning_rate == learning_rate)
+        query = query.filter(Model.learning_rate == learning_rate)
     if optimization_algorithm is not None:
-        query.filter(Model.optimization_algorithm == optimization_algorithm)
+        query = query.filter(Model.optimization_algorithm == optimization_algorithm)
     if timestamp is not None:
-        query.filter(Model.timestamp >= timestamp)
+        query = query.filter(Model.timestamp >= timestamp)
     if attained_training_loss is not None:
-        query.join(TrainingRun).join(ModelEvaluation).filter(
+        query = query.join(TrainingRun).join(ModelEvaluation).filter(
             ModelEvaluation.dataset_type == "training", 
             ModelEvaluation.loss <= attained_training_loss)
     if attained_validation_loss is not None:
-        query.join(TrainingRun).join(ModelEvaluation).filter(
+        query = query.join(TrainingRun).join(ModelEvaluation).filter(
             ModelEvaluation.dataset_type == "validation", 
             ModelEvaluation.loss <= attained_validation_loss)
     if attained_test_loss is not None:
-        query.join(TrainingRun).join(ModelEvaluation).filter(
+        query = query.join(TrainingRun).join(ModelEvaluation).filter(
             ModelEvaluation.dataset_type == "test", 
             ModelEvaluation.loss <= attained_test_loss)
 
     return query.all()
 
 
-def get_training_run_info(model_id=None, model=None):
+def get_latest_training_run(model_id=None, model=None):
     session = start_session()
     if model is not None:
         model_id = model.model_id
-    try:
-        training_run = session.query(TrainingRun).filter(
-            TrainingRun.model_id == model_id).one()
-    except NoResultFound:
+    training_runs = session.query(TrainingRun).filter(
+        TrainingRun.model_id == model_id).all()
+    if len(training_runs) >= 1:
+        training_run = training_runs[-1]
+    else:
         training_run = None
 
     return training_run
