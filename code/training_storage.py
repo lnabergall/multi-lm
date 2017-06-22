@@ -283,7 +283,8 @@ def store_training_run(model_id, parameters_file_path, begin_timestamp,
                           smallest_output_length=smallest_output_length,
                           largest_output_length=largest_output_length)
 
-    training_run = TrainingRun(begin_timestamp=begin_timestamp,
+    training_run = TrainingRun(model_parameters_file=parameters_file_path,
+                               begin_timestamp=begin_timestamp,
                                end_timestamp=end_timestamp,
                                used_gpus=used_gpus,
                                cpu=cpu, gpu=gpu, ram=ram)
@@ -398,7 +399,8 @@ def get_model_info(most_recent=None, input_type=None, output_type=None,
     if optimization_algorithm is not None:
         query = query.filter(Model.optimization_algorithm == optimization_algorithm)
     if timestamp is not None:
-        query = query.filter(Model.timestamp >= timestamp)
+        query = query.join(TrainingRun).filter(
+            TrainingRun.end_timestamp >= timestamp)
     if attained_training_loss is not None:
         query = query.join(TrainingRun).join(ModelEvaluation).filter(
             ModelEvaluation.dataset_type == "training", 
