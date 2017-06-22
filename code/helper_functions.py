@@ -216,6 +216,8 @@ def compare_loss_tracks(dataset_type=None, only_summary=False,
     if dataset_type:
         plot_loss(*all_loss_tracks, labels=all_labels, plot_first_average=False)
 
+    return models
+
 
 def get_model_clusters(*hyperparameters):
     """
@@ -257,10 +259,14 @@ def output_training_times(models):
         print(label + ": duration", duration, "seconds")
 
 
-def analyze_training_run_clusters(dataset_type, *hyperparameters, 
-                                  minimal_cluster_size=None, 
+def analyze_training_run_clusters(dataset_type, *hyperparameters,
+                                  models=None, 
+                                  minimal_cluster_size=None,
                                   analyze="loss_tracks"):
-    model_clusters = get_model_clusters(*hyperparameters)
+    if models is not None:
+        model_clusters = [models]
+    else:
+        model_clusters = get_model_clusters(*hyperparameters)
     if minimal_cluster_size:
         model_clusters = [model_cluster for model_cluster in model_clusters 
                           if len(model_cluster) >= minimal_cluster_size]
@@ -275,25 +281,30 @@ def analyze_training_run_clusters(dataset_type, *hyperparameters,
 
 def compare_recent_training_runs(dataset_type):
     timestamp = datetime.utcnow()
-    timestamp = timestamp.replace(day=timestamp.day-2)
-    compare_loss_tracks(dataset_type=dataset_type, only_summary=True, 
-                        timestamp=timestamp)
+    timestamp = timestamp.replace(day=timestamp.day-1)
+    models = compare_loss_tracks(dataset_type=dataset_type, only_summary=True, 
+                                 timestamp=timestamp)
     plotter.show()
+    return models
 
 
 if __name__ == '__main__':
-    pass
+    models = compare_recent_training_runs("training")
+    print(len(models))
+    analyze_training_run_clusters(
+        "training", models=models, analyze="training_time")
+    compare_recent_training_runs("validation")
     # compare_loss_tracks(dataset_type="training", only_summary=True, 
     #                     learning_rate=0.001)
     # compare_loss_tracks(dataset_type="validation", only_summary=True, 
     #                     learning_rate=0.001)
     # plotter.show()
     # analyze_training_run_clusters(
-    #     "training", "optimization_algorithm", 
-    #     minimal_cluster_size=3, analyze="training_time")
+    #     "training", "batch_size", "learning_rate",
+    #     minimal_cluster_size=6, analyze="training_time")
     # analyze_training_run_clusters(
-    #     "training", "optimization_algorithm", 
-    #     minimal_cluster_size=3)
+    #     "training", "batch_size", "learning_rate", 
+    #     minimal_cluster_size=6)
     # analyze_training_run_clusters(
-    #     "validation", "optimization_algorithm", 
-    #     minimal_cluster_size=3)
+    #     "validation", "batch_size", "learning_rate", 
+    #     minimal_cluster_size=6)
