@@ -35,7 +35,7 @@ COPY_TASK = False
 ENCODER_VOCAB_SIZE = 0
 DECODER_VOCAB_SIZE = 0
 HIDDEN_DIM = 200
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.005
 BACKPROP_TIMESTEPS = 50
 BATCH_SIZE = 16
 EPOCHS = 50
@@ -49,9 +49,9 @@ class Seq2SeqModel():
     PAD = 0
     EOS = 1
 
-    def __init__(self, encoder_cell, decoder_cell, encoder_vocab_size, 
-                 decoder_vocab_size, encoder_embedding_size, 
-                 decoder_embedding_size, hidden_dim=HIDDEN_DIM, 
+    def __init__(self, encoder_cell=None, decoder_cell=None, encoder_vocab_size=None, 
+                 decoder_vocab_size=None, encoder_embedding_size=None, 
+                 decoder_embedding_size=None, hidden_dim=HIDDEN_DIM, 
                  batch_size=BATCH_SIZE, learning_rate=LEARNING_RATE, 
                  optimizer=OPTIMIZER, bidirectional=False, attention=False, 
                  layers=1, model_dir=MODEL_DIR, graph=None, model=None):
@@ -79,7 +79,7 @@ class Seq2SeqModel():
             self.batch_size = model.batch_size
             self.truncated_backprop = model.truncated_backprop
             self.learning_rate = model.learning_rate
-            self.optimizer = optimization_algorithm
+            self.optimizer = model.optimization_algorithm
 
             self._init_placeholders()
         else:
@@ -135,15 +135,15 @@ class Seq2SeqModel():
 
     def _init_placeholders(self):
         if self.graph:
-            self.encoder_inputs = graph.get_tensor_by_name(
+            self.encoder_inputs = self.graph.get_tensor_by_name(
                 "encoder_inputs:0")
-            self.encoder_inputs_length = graph.get_tensor_by_name(
+            self.encoder_inputs_length = self.graph.get_tensor_by_name(
                 "encoder_inputs_length:0")
 
             # Required for training, not for testing
-            self.decoder_targets = graph.get_tensor_by_name(
+            self.decoder_targets = self.graph.get_tensor_by_name(
                 "decoder_targets:0")
-            self.decoder_targets_length = graph.get_tensor_by_name(
+            self.decoder_targets_length = self.graph.get_tensor_by_name(
                 "decoder_targets_length:0")
         else:
             # Everything is time-major
@@ -633,11 +633,15 @@ def validate_on_desc2code_task(session, model, validation_data,
 
 def load_model(session, stored_model, stored_run):
     saver = tf.train.import_meta_graph(stored_model.model_graph_file)
-    saver.restore(session, stored_run.model_parameters_file)
+    if not stored_run.model_parameters_file:
+        model_parameters_file = input("Model parameters file path: ").strip()
+        saver.restore(session, model_parameters_file)
+    else:
+        saver.restore(session, stored_run.model_parameters_file)
     session.run(tf.global_variables_initializer())
     session.run(tf.local_variables_initializer())
     graph = tf.get_default_graph()
-    model = Seq2SeqModel(graph=graph)
+    model = Seq2SeqModel(graph=graph, model=stored_model)
     model.load()
 
     return model
@@ -753,16 +757,19 @@ def train_model(plot_losses=True, training_description_count=0, layers=1,
 
 
 if __name__ == '__main__':
-    # stored_model = storage.get_model_info(
-    #     batch_size=32, learning_rate=0.005, 
-    #     optimization_algorithm=str(type(tf.train.RMSPropOptimizer(0.005))))[-1]
-    # stored_run = storage.get_latest_training_run(model=stored_model)
-    # infer_using_model(stored_model, stored_run)
-    optimizers = [tf.train.RMSPropOptimizer(LEARNING_RATE),
-                  tf.train.AdamOptimizer(LEARNING_RATE), 
-                  tf.train.FtrlOptimizer(.2)]
-    labels = [helper.get_optimizer_label(str(optimizer)) for optimizer in optimizers]
-    for i, optimizer in enumerate(optimizers):
-        with open("train_run_log_op_" + labels[i] + "_2.txt", "w") as log_file:
-            sys.stdout = log_file
-            train_model(plot_losses=False, optimizer=optimizer)
+    stored_models = storage.get_model_info(
+        batch_size=32, learning_rate=0.005, 
+        optimization_algorithm=str(type(tf.train.RMSPropOptimizer(0.005))))
+    for i, stored_model in enumerate(stored_models):
+        stored_run = storage.get_latest_training_run(model=stored_model)
+        if stored_run.model_parameters_file:
+            break
+    infer_using_model(stored_models[i], stored_run)
+    # configs = [(32, 0.005), (8, 0.005), (16, 0.005), 
+    #            (32, 0.001), (8, 0.001), (16, 0.001)]
+    # for i, (batch_size, learning_rate) in enumerate(configs):
+    #     with open("train_run_log_bs_" + str(batch_size) 
+    #               + "_lr_" + str(learning_rate) + ".txt", "w") as log_file:
+    #         sys.stdout = log_file
+    #         train_model(plot_losses=False, batch_size=batch_size, 
+    #                     learning_rate=learning_rate)
