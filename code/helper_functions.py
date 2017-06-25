@@ -281,7 +281,7 @@ def analyze_training_run_clusters(dataset_type, *hyperparameters,
 
 def compare_recent_training_runs(dataset_type):
     timestamp = datetime.utcnow()
-    timestamp = timestamp.replace(day=timestamp.day-1)
+    timestamp = timestamp.replace(day=timestamp.day-2)
     models = compare_loss_tracks(dataset_type=dataset_type, only_summary=True, 
                                  timestamp=timestamp)
     plotter.show()
@@ -290,7 +290,6 @@ def compare_recent_training_runs(dataset_type):
 
 if __name__ == '__main__':
     models = compare_recent_training_runs("training")
-    print(len(models))
     analyze_training_run_clusters(
         "training", models=models, analyze="training_time")
     compare_recent_training_runs("validation")
@@ -300,11 +299,11 @@ if __name__ == '__main__':
     #                     learning_rate=0.001)
     # plotter.show()
     # analyze_training_run_clusters(
-    #     "training", "batch_size", "learning_rate",
-    #     minimal_cluster_size=6, analyze="training_time")
+    #     "training", "bidirectional", "attention",
+    #     minimal_cluster_size=2, analyze="training_time")
     # analyze_training_run_clusters(
-    #     "training", "batch_size", "learning_rate", 
-    #     minimal_cluster_size=6)
+    #     "training", "bidirectional", "attention",
+    #     minimal_cluster_size=2)
     # analyze_training_run_clusters(
-    #     "validation", "batch_size", "learning_rate", 
-    #     minimal_cluster_size=6)
+    #     "validation", "bidirectional", "attention",
+    #     minimal_cluster_size=2)

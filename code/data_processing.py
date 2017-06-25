@@ -1,5 +1,6 @@
 
 import os
+from time import sleep
 from random import shuffle
 from statistics import mean, median
 from itertools import product
@@ -298,9 +299,17 @@ def devectorize(vector, data_type, desc_char_counts, python_char_counts):
     desc_value_chars = {i: char for char, i in desc_char_values.items()}
     python_value_chars = {i: char for char, i in python_char_values.items()}
 
+    if len(vector.shape) >= 2:
+        vector = vector.flatten()
+    if type(vector) == np.ndarray:
+        length = vector.size
+    elif type(vector) == list:
+        length = len(vector)
+    else:
+        raise NotImplementedError("Unexpected type: " + type(vector))
     text = ""
     if data_type == "description":
-        for i in range(vector.size):
+        for i in range(length):
             if vector[i] == 0:
                 text += "\n"
             elif vector[i] == 1:
@@ -308,7 +317,7 @@ def devectorize(vector, data_type, desc_char_counts, python_char_counts):
             else:
                 text += desc_value_chars[vector[i]]
     elif data_type == "script":
-        for i in range(vector.size):
+        for i in range(length):
             if vector[i] == 0:
                 text += "\n"
             elif vector[i] == 1:

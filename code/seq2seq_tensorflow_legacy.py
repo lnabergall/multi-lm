@@ -80,6 +80,8 @@ class Seq2SeqModel():
             self.truncated_backprop = model.truncated_backprop
             self.learning_rate = model.learning_rate
             self.optimizer = model.optimization_algorithm
+            if "RMSProp" in self.optimizer:
+                self.optimizer = tf.train.RMSPropOptimizer(self.learning_rate)
 
             self._init_placeholders()
         else:
@@ -87,8 +89,10 @@ class Seq2SeqModel():
                 self.encoder_cell = encoder_cell
                 self.decoder_cell = decoder_cell
             else:
-                self.encoder_cell = MultiRNNCell([encoder_cell]*layers)
-                self.decoder_cell = MultiRNNCell([decoder_cell]*layers)
+                self.encoder_cell = MultiRNNCell(
+                    [encoder_cell for i in range(layers)])
+                self.decoder_cell = MultiRNNCell(
+                    [decoder_cell for i in range(layers)])
 
             self.description = ("Sequence-to-sequence recurrent neural network model" 
                                 " that generates Python scripts from programming" 
@@ -181,7 +185,8 @@ class Seq2SeqModel():
             # Put EOS symbol at the end of target sequence
             decoder_train_targets = tf.add(decoder_train_targets,
                                            decoder_train_targets_eos_mask)
-            self.decoder_train_targets = decoder_train_targets
+            self.decoder_train_targets = tf.identity(
+                decoder_train_targets, name="decoder_train_targets")
 
             self.loss_weights = tf.ones(
                 [batch_size, tf.reduce_max(self.decoder_train_length)], 
@@ -279,7 +284,7 @@ class Seq2SeqModel():
                     start_of_sequence_id=self.EOS,
                     end_of_sequence_id=self.EOS,
                     maximum_length=tf.reduce_max(self.encoder_inputs_length) + 3,
-                    num_decoder_symbols=self.vocab_size)
+                    num_decoder_symbols=self.decoder_vocab_size)
 
             (self.decoder_outputs_train, self.decoder_state_train, 
              self.decoder_context_state_train) = dynamic_rnn_decoder(
@@ -288,7 +293,8 @@ class Seq2SeqModel():
                 sequence_length=self.decoder_train_length,
                 time_major=True, scope=scope)
 
-            self.decoder_logits_train = output_fn(self.decoder_outputs_train)
+            self.decoder_logits_train = tf.identity(
+                output_fn(self.decoder_outputs_train), name="decoder_logits_train")
             self.decoder_prediction_train = tf.argmax(
                 self.decoder_logits_train, axis=-1, name="decoder_prediction_train")
 
@@ -387,26 +393,39 @@ class Seq2SeqModel():
         return checkpoint_path
 
     def load(self):
+        self.decoder_train_targets = self.graph.get_tensor_by_name(
+            "DecoderTrainFeeds/decoder_train_targets:0")
+        self.decoder_logits_train = self.graph.get_tensor_by_name(
+            "Decoder/decoder_logits_train:0")
         self.decoder_prediction_train = self.graph.get_tensor_by_name(
-            "decoder_prediction_train:0")
+            "Decoder/decoder_prediction_train:0")
         self.decoder_logits_inference = self.graph.get_tensor_by_name(
-            "decoder_logits_inference:0")
+            "Decoder/decoder_logits_inference:0")
         self.decoder_prediction_inference = self.graph.get_tensor_by_name(
-            "decoder_prediction_inference:0")
-        self.loss = self.graph.get_tensor_by_name("sequence_loss:0")
-        self.train_op = self.graph.get_tensor_by_name("train_op:0")
+            "Decoder/decoder_prediction_inference:0")
+        self.loss_weights = self.graph.get_tensor_by_name(
+            "DecoderTrainFeeds/loss_weights:0")
+        # self._init_optimizer()
 
-    def infer(self, input_array):
+    def infer(self, session, input_array, target_array):
         start_time = time()
-        if input_array.dim == 1:
+        if input_array.ndim == 1:
             # Assumes row vector input
             input_array = np.reshape(input_array, (-1, 1))
         elif input_array.shape[0] == 1:
             input_array = np.transpose(input_array)
-        feed_dict = self.make_inference_inputs(input_array, [input_array.shape[0]])
-        prediction = session.run([self.decoder_prediction_inference], feed_dict)
+        if target_array.ndim == 1:
+            # Assumes row vector target
+            target_array = np.reshape(target_array, (-1, 1))
+        elif target_array.shape[0] == 1:
+            target_array = np.transpose(target_array)
+        feed_dict = self.make_train_inputs(input_array, [input_array.shape[0]], 
+                                           target_array, [target_array.shape[0]])
+        prediction_inference, prediction_train = session.run(
+            [self.decoder_prediction_inference, self.decoder_prediction_train], 
+            feed_dict)
         duration = time() - start_time
-        return prediction, duration
+        return prediction_inference, prediction_train, duration
 
 
 def train_on_copy_task(session, length_from=3, length_to=8, vocab_lower=2, 
@@ -495,8 +514,13 @@ def train_on_desc2code_task(session, training_data, validation_data,
         description_chars, script_chars, ENCODER_VOCAB_SIZE, 
         ENCODER_VOCAB_SIZE)
 
+    if bidirectional:
+        encoder_cell = LSTMCell(hidden_dim//2)
+    else:
+        encoder_cell = LSTMCell(hidden_dim)
+
     print("\nCreating model...")
-    model = Seq2SeqModel(encoder_cell=LSTMCell(hidden_dim),
+    model = Seq2SeqModel(encoder_cell=encoder_cell,
                          decoder_cell=LSTMCell(hidden_dim),
                          encoder_vocab_size=description_values_count,
                          decoder_vocab_size=script_values_count,
@@ -659,11 +683,25 @@ def perform_inference(session, model, input_strings, target_strings,
 
     predictions = []
     total_duration = 0
-    for input_array in vectorized_inputs:
-        prediction, duration = model.infer(input_array)
-        prediction_text = dp.devectorize(prediction, "script", 
-                                         description_chars, script_chars)
-        predictions.append(prediction_text)
+    for i, (input_array, target_array) in enumerate(zip(
+            vectorized_inputs, vectorized_targets)):
+        prediction_inference, prediction_train, duration = model.infer(
+            session, input_array, target_array)
+        prediction_inference_text = dp.devectorize(
+            prediction_inference, "script", description_chars, script_chars)
+        prediction_train_text = dp.devectorize(
+            prediction_train, "script", description_chars, script_chars)
+        with open("temp_inference_file.txt", "a") as infer_file:
+            print("Prediction Inference:", file=infer_file)
+            print(prediction_inference_text, file=infer_file)
+            print("\n", file=infer_file)
+            print("Prediction Train:", file=infer_file)
+            print(prediction_train_text, file=infer_file)
+            print("\n", file=infer_file)
+            print("Target:", file=infer_file)
+            print(target_strings[i], file=infer_file)
+            print("\n\n\n", file=infer_file)
+        predictions.append(prediction_inference_text)
         total_duration += duration
 
     return predictions, total_duration
@@ -757,19 +795,28 @@ def train_model(plot_losses=True, training_description_count=0, layers=1,
 
 
 if __name__ == '__main__':
-    stored_models = storage.get_model_info(
-        batch_size=32, learning_rate=0.005, 
-        optimization_algorithm=str(type(tf.train.RMSPropOptimizer(0.005))))
-    for i, stored_model in enumerate(stored_models):
-        stored_run = storage.get_latest_training_run(model=stored_model)
-        if stored_run.model_parameters_file:
-            break
-    infer_using_model(stored_models[i], stored_run)
-    # configs = [(32, 0.005), (8, 0.005), (16, 0.005), 
-    #            (32, 0.001), (8, 0.001), (16, 0.001)]
-    # for i, (batch_size, learning_rate) in enumerate(configs):
-    #     with open("train_run_log_bs_" + str(batch_size) 
-    #               + "_lr_" + str(learning_rate) + ".txt", "w") as log_file:
-    #         sys.stdout = log_file
-    #         train_model(plot_losses=False, batch_size=batch_size, 
-    #                     learning_rate=learning_rate)
+    action = "train"
+    if action == "infer":
+        timestamp = datetime.utcnow()
+        timestamp = timestamp.replace(day=timestamp.day-2)
+        stored_models = storage.get_model_info(
+            timestamp=timestamp, batch_size=16, 
+            attention=False, bidirectional_encoder=False)
+        if len(stored_models) != 1:
+            print("Whoops!")
+            raise NotImplementedError
+        stored_run = storage.get_latest_training_run(model=stored_models[-1])
+        infer_using_model(stored_models[-1], stored_run)
+    elif action == "train":
+        configs = [(3, False, False), (3, True, False), (3, True, True)]
+        for i, (layers, bidirectional, attention) in enumerate(configs):
+            log_file_name = "train_run_log"
+            if bidirectional:
+                log_file_name += "_bidirectional_encoder"
+            if attention:
+                log_file_name += "_attention"
+            log_file_name += "_layers-" + str(layers)
+            with open(log_file_name + ".txt", "w") as log_file:
+                sys.stdout = log_file
+                train_model(plot_losses=False, bidirectional=bidirectional, 
+                            attention=attention, layers=layers)
