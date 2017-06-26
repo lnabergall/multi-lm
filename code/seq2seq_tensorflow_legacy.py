@@ -240,8 +240,29 @@ class Seq2SeqModel():
                 self.encoder_state = LSTMStateTuple(
                     c=encoder_state_c, h=encoder_state_h)
             elif isinstance(encoder_fw_state, tf.Tensor):
-                self.encoder_state = tf.concat((encoder_fw_state, encoder_bw_state),
-                                               1, name="bidirectional_concat")
+                self.encoder_state = tf.concat(
+                    (encoder_fw_state, encoder_bw_state),
+                    1, name="bidirectional_concat")
+            elif isinstance(encoder_fw_state, tuple):
+                self.encoder_state = [None, None, None]
+                for i in range(len(encoder_fw_state)):
+                    encoder_fw_state_part = encoder_fw_state[i]
+                    encoder_bw_state_part = encoder_bw_state[i]
+                    if isinstance(encoder_fw_state_part, LSTMStateTuple):
+                        encoder_state_c = tf.concat(
+                            (encoder_fw_state_part.c, encoder_bw_state_part.c), 
+                            1, name="bidirectional_concat_c")
+                        encoder_state_h = tf.concat(
+                            (encoder_fw_state_part.h, encoder_bw_state_part.h), 
+                            1, name="bidirectional_concat_h")
+                        encoder_state_part = LSTMStateTuple(
+                            c=encoder_state_c, h=encoder_state_h)
+                    elif isinstance(encoder_fw_state_part, tf.Tensor):
+                        encoder_state_part = tf.concat(
+                            (encoder_fw_state_part, encoder_bw_state_part),
+                            1, name="bidirectional_concat")
+                    self.encoder_state[i] = encoder_state_part
+                self.encoder_state = tuple(self.encoder_state)
 
     def _init_decoder(self):
         with tf.variable_scope("Decoder") as scope:
@@ -808,7 +829,7 @@ if __name__ == '__main__':
         stored_run = storage.get_latest_training_run(model=stored_models[-1])
         infer_using_model(stored_models[-1], stored_run)
     elif action == "train":
-        configs = [(3, False, False), (3, True, False), (3, True, True)]
+        configs = [(3, True, False), (3, True, True)]
         for i, (layers, bidirectional, attention) in enumerate(configs):
             log_file_name = "train_run_log"
             if bidirectional:
