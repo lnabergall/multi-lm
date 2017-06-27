@@ -728,7 +728,7 @@ def perform_inference(session, model, input_strings, target_strings,
     return predictions, total_duration
 
 
-def infer_using_model(stored_model, stored_run):
+def infer_using_model(stored_model=None, stored_run=None, model=None, session=None):
     print("\nFetching data...")
     data = dp.get_data()
     print("\nProcessing data...")
@@ -743,10 +743,15 @@ def infer_using_model(stored_model, stored_run):
             input_strings.append(description)
             target_strings.append(script)
 
-    tf.reset_default_graph()
-    tf.set_random_seed(1)
-    with tf.Session() as session:
-        model = load_model(session, stored_model, stored_run)
+    if session is None or model is None:
+        tf.reset_default_graph()
+        tf.set_random_seed(1)
+        with tf.Session() as session:
+            model = load_model(session, stored_model, stored_run)
+            predictions, duration = perform_inference(
+                session, model, input_strings, target_strings,
+                description_chars, script_chars)
+    else:
         predictions, duration = perform_inference(
             session, model, input_strings, target_strings,
             description_chars, script_chars)
@@ -814,30 +819,34 @@ def train_model(plot_losses=True, training_description_count=0, layers=1,
             print("Best validation loss:", 
                   min(eval_step[0] for eval_step in validation_loss_track))
 
+        # Test inference
+        infer_using_model(model=model, session=session)
+
 
 if __name__ == '__main__':
     action = "train"
-    if action == "infer":
+    if action == "train":
+        log_file_name = "train_run_log_default2"
+        with open(log_file_name + ".txt", "w") as log_file:
+            sys.stdout = log_file
+            train_model(plot_losses=False)
+        # configs = [(3, True, False), (3, True, True)]
+        # for i, (layers, bidirectional, attention) in enumerate(configs):
+        #     log_file_name = "train_run_log"
+        #     if bidirectional:
+        #         log_file_name += "_bidirectional_encoder"
+        #     if attention:
+        #         log_file_name += "_attention"
+        #     log_file_name += "_layers-" + str(layers)
+        #     with open(log_file_name + ".txt", "w") as log_file:
+        #         sys.stdout = log_file
+        #         train_model(plot_losses=False, bidirectional=bidirectional, 
+        #                     attention=attention, layers=layers)
+    elif action == "infer":
         timestamp = datetime.utcnow()
         timestamp = timestamp.replace(day=timestamp.day-2)
         stored_models = storage.get_model_info(
             timestamp=timestamp, batch_size=16, 
             attention=False, bidirectional_encoder=False)
-        if len(stored_models) != 1:
-            print("Whoops!")
-            raise NotImplementedError
         stored_run = storage.get_latest_training_run(model=stored_models[-1])
         infer_using_model(stored_models[-1], stored_run)
-    elif action == "train":
-        configs = [(3, True, False), (3, True, True)]
-        for i, (layers, bidirectional, attention) in enumerate(configs):
-            log_file_name = "train_run_log"
-            if bidirectional:
-                log_file_name += "_bidirectional_encoder"
-            if attention:
-                log_file_name += "_attention"
-            log_file_name += "_layers-" + str(layers)
-            with open(log_file_name + ".txt", "w") as log_file:
-                sys.stdout = log_file
-                train_model(plot_losses=False, bidirectional=bidirectional, 
-                            attention=attention, layers=layers)
