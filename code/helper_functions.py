@@ -114,13 +114,15 @@ def filtered_by_trained(models):
     return trained_models
 
 
-def get_optimizer_label(optimizer_string):
-    possible_labels = re.findall(r"[a-zA-Z]+", optimizer_string) 
+def get_label(string, value_type="optimizer"):
+    possible_labels = re.findall(r"[a-zA-Z]+", string) 
     for label in possible_labels:
-        if "Optimizer" in label:
-            optimizer_label = label
+        if ((value_type == "optimizer" and "Optimizer" in label)
+                or (value_type == "cell" and "Cell" in label)):
+            correct_label = label
             break
-    return optimizer_label
+
+    return correct_label
 
 
 def get_unique_hyperparameters(models):
@@ -152,7 +154,9 @@ def make_labels(models):
         label = "Model " + str(model_id)
         for hyperparameter, value in unique_hyperparameters[model_id].items():
             if type(value) == str and "optimizer" in value.lower():
-                value = get_optimizer_label(value)
+                value = get_label(value, value_type="optimizer")
+            if type(value) == str and "cell" in value.lower():
+                value = get_label(value, value_type="cell")
             label += " - " + hyperparameter + " " + str(value)
             label = label.replace("_", " ")
         labels.append(label)
@@ -236,7 +240,9 @@ def get_model_clusters(*hyperparameters):
                 if (hyperparameter in hyperparameters 
                         or hyperparameter == "model_id"
                         or hyperparameter == "timestamp"
-                        or hyperparameter == "model_graph_file"):
+                        or hyperparameter == "model_graph_file"
+                        or hyperparameter == "encoder_cell"
+                        or hyperparameter == "decoder_cell"):
                     continue
                 if representative[hyperparameter] != model_dict[hyperparameter]:
                     match = False
@@ -289,21 +295,23 @@ def compare_recent_training_runs(dataset_type):
 
 
 if __name__ == '__main__':
-    models = compare_recent_training_runs("training")
-    analyze_training_run_clusters(
-        "training", models=models, analyze="training_time")
-    compare_recent_training_runs("validation")
-    # compare_loss_tracks(dataset_type="training", only_summary=True, 
-    #                     learning_rate=0.001)
+    # models = compare_recent_training_runs("training")
+    # analyze_training_run_clusters(
+    #     "training", models=models, analyze="training_time")
+    # compare_recent_training_runs("validation")
+    # models = compare_loss_tracks(dataset_type="training", only_summary=True, 
+    #                              layers=3)
+    # analyze_training_run_clusters(
+    #     "training", models=models, analyze="training_time")
     # compare_loss_tracks(dataset_type="validation", only_summary=True, 
-    #                     learning_rate=0.001)
+    #                     layers=3)
     # plotter.show()
-    # analyze_training_run_clusters(
-    #     "training", "bidirectional", "attention",
-    #     minimal_cluster_size=2, analyze="training_time")
-    # analyze_training_run_clusters(
-    #     "training", "bidirectional", "attention",
-    #     minimal_cluster_size=2)
-    # analyze_training_run_clusters(
-    #     "validation", "bidirectional", "attention",
-    #     minimal_cluster_size=2)
+    analyze_training_run_clusters(
+        "training", "bidirectional", "attention", "layers",
+        minimal_cluster_size=4, analyze="training_time")
+    analyze_training_run_clusters(
+        "training", "bidirectional", "attention", "layers",
+        minimal_cluster_size=4)
+    analyze_training_run_clusters(
+        "validation", "bidirectional", "attention", "layers",
+        minimal_cluster_size=4)
