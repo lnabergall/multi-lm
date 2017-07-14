@@ -326,7 +326,7 @@ def get_genre_name_germanc(file_name):
 
 
 def extract_parole_corpus_documents(text):
-    text = BeautifulSoup(text).text  # Convert html encoding to utf-8
+    text = BeautifulSoup(text).text  # Ensure encoding is utf-8
     if "<div1" in text:
         documents = re.split(r"<div1 type=.*?>", text, flags=re.IGNORECASE)[1:]
     else:
@@ -363,5 +363,32 @@ def extract_lancaster_documents(text):
                 cleaned_documents.append(convert_chinese_punctuation(document))
 
     return cleaned_documents
+
+
+def extract_leiden_weibo_messages(csv_text):
+    messages_with_metadata = [line for line in csv_text.split("\n") 
+                              if line.strip()]
+    messages = []
+    for message in messages_with_metadata:
+        message = message.split("\",\"")[5].replace("\"", "")
+        messages.append(convert_chinese_punctuation(message))
+
+    return messages
+
+
+def extract_oral_narrative(html_text):
+    html_text = BeautifulSoup(html_text).text.split("<body>")[1]
+    html_text_cleaned = re.sub(r"\[.*?\]", "", html_text)   # Remove sounds
+    text_cleaned = re.sub(r"<.*?>", "", html_text_cleaned)  # Remove tags
+    return remove_excess_whitespace(text_cleaned)
+
+
+def get_storyteller_oral_narrative(file_name):
+    return file_name.split("_")[0]
+
+
+def clean_abu_corpus_text(text):
+    cleaned_text = re.split(r"-{25} DEBUT DU FICHIER .*? -{32}", text)[1]
+    return remove_excess_whitespace(cleaned_text)
 
 
