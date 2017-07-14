@@ -414,7 +414,7 @@ def get_model_info(most_recent=None, input_type=None, output_type=None,
             ModelEvaluation.dataset_type == "test", 
             ModelEvaluation.loss <= attained_test_loss)
 
-    return query.all()
+    return query.order_by(Model.timestamp.desc()).all()
 
 
 def get_latest_training_run(model_id=None, model=None):

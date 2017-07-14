@@ -683,8 +683,6 @@ def load_model(session, stored_model, stored_run):
         saver.restore(session, model_parameters_file)
     else:
         saver.restore(session, stored_run.model_parameters_file)
-    session.run(tf.global_variables_initializer())
-    session.run(tf.local_variables_initializer())
     graph = tf.get_default_graph()
     model = Seq2SeqModel(graph=graph, model=stored_model)
     model.load()
@@ -704,6 +702,8 @@ def perform_inference(session, model, input_strings, target_strings,
 
     predictions = []
     total_duration = 0
+    with open("temp_inference_file.txt", "a") as infer_file:
+        print("-----------------------------------\n\n", file=infer_file)
     for i, (input_array, target_array) in enumerate(zip(
             vectorized_inputs, vectorized_targets)):
         prediction_inference, prediction_train, duration = model.infer(
@@ -745,7 +745,6 @@ def infer_using_model(stored_model=None, stored_run=None, model=None, session=No
 
     if session is None or model is None:
         tf.reset_default_graph()
-        tf.set_random_seed(1)
         with tf.Session() as session:
             model = load_model(session, stored_model, stored_run)
             predictions, duration = perform_inference(
@@ -824,7 +823,7 @@ def train_model(plot_losses=True, training_description_count=0, layers=1,
 
 
 if __name__ == '__main__':
-    action = "train"
+    action = "infer"
     if action == "train":
         log_file_name = "train_run_log_default2"
         with open(log_file_name + ".txt", "w") as log_file:
@@ -844,9 +843,10 @@ if __name__ == '__main__':
         #                     attention=attention, layers=layers)
     elif action == "infer":
         timestamp = datetime.utcnow()
-        timestamp = timestamp.replace(day=timestamp.day-2)
+        timestamp = timestamp.replace(day=timestamp.day-4)
         stored_models = storage.get_model_info(
             timestamp=timestamp, batch_size=16, 
-            attention=False, bidirectional_encoder=False)
-        stored_run = storage.get_latest_training_run(model=stored_models[-1])
+            attention=False, bidirectional_encoder=True,
+            layers=3)
+        stored_run = storage.get_latest_training_run(model=stored_models[0])
         infer_using_model(stored_models[-1], stored_run)
