@@ -2,8 +2,9 @@
 
 import os
 import re
+import tarfile
+import io
 import tokenize as py_token
-from xml.etree import ElementTree
 
 import textacy
 from pygments import lex
@@ -33,6 +34,31 @@ HTML = "html"
 LATEX = "latex"
 YAML = "yaml"
 MARKDOWN = "markdown"
+
+
+def invert_mapping(mapping):
+    inverse_mapping = {}
+    for key, values in mapping.items():
+        for value in values:
+            inverse_mapping.setdefault(value, []).append(key)
+
+    return inverse_mapping
+
+
+def get_files_from_directory(root_path, extension=None):
+    files = [file for file in os.listdir(root_path) 
+             if os.path.isfile(join(root_path), file)]
+    if extension is not None:
+        files = [file for file in files if file.endswith(extension)]
+
+    return files
+
+
+def add_text_file(tar, string, file_name):
+    string_file = io.BytesIO(string.encode("utf-8"))
+    tarinfo = tarfile.TarInfo(file_name)
+    tarinfo.size = len(string)
+    tar.addfile(tarinfo, string_file)
 
 
 def detect_language(file_path):
@@ -157,21 +183,56 @@ def store_tokens(tokens, file_path):
 
 
 def remove_excess_whitespace(text):
-    text_cleaned = text
+    text_cleaned = text.strip()
     for i, regex_char in enumerate(
-            [r"\n+", r"\t+", r"\r+", r"\f+", r"\v+", r"[ ]+"]):
+            [r"\n{2,}", r"\t+", r"\r+", r"\f+", r"\v+", r"[ ]{2,}"]):
         if i == 0:
-            text_cleaned = re.sub(regex_char, "\n", text_cleaned)
+            text_cleaned = re.sub(regex_char, "\n\n", text_cleaned)
         elif i == 5:
-            text_cleaned = re.sub(regex_char, " ", text_cleaned)
+            text_cleaned = re.sub(regex_char, "  ", text_cleaned)
         else:
             text_cleaned = re.sub(regex_char, "", text_cleaned)
 
     return text_cleaned
 
 
-def convert_spaces_to_tabs(text):
+def convert_spaces_to_tabs(code_text):
     return re.sub(r"[ ]{4}", "\t", text)
+
+
+def remove_multiline_comments(code_text, language):
+    if language == PYTHON:
+        text_cleaned = re.sub(r"^\s*?\"\"\".*?(?<!\"\"\")\n.*?\"\"\"", "", 
+                              text, flags=re.MULTILINE)
+        text_cleaned = re.sub(r"^\s*?\'\'\'.*?\n.*?\'\'\'", "", 
+                              text_cleaned, flags=re.MULTILINE)
+        text_cleaned = re.sub(r"^(\s*?#.*?\n){2,}", "", 
+                              text_cleaned, flags=re.MULTILINE)
+    elif language == C:
+        text_cleaned = re.sub(r"^\s*?/\*.*?(?<!\*/)\n.*?\*/", "", 
+                              text, flags=re.MULTILINE)
+        text_cleaned = re.sub(r"^(\s*?//.*?\n){2,}", "", 
+                              text_cleaned, flags=re.MULTILINE)
+    elif language == FORTRAN:
+        text_cleaned = re.sub(r"^([\*cCdD].*?\n){2,}", "", 
+                              text, flags=re.MULTILINE)
+        text_cleaned = re.sub(r"^(\s*?!.*?\n){2,}", "",
+                              text_cleaned, flags=re.MULTILINE)
+    elif language == LISP:
+        text_cleaned = re.sub(r"^\s*?\".*?(?<!\")\n.*?\"", "", 
+                              text, flags=re.MULTILINE)
+        text_cleaned = re.sub(r"^(\s*?;.*?\n){2,}", "", 
+                              text_cleaned, flags=re.MULTILINE)
+        text_cleaned_prev = text_cleaned
+        while text_cleaned != text_cleaned_prev:
+            text_cleaned_prev = text_cleaned
+            text_cleaned = re.sub(r"^\s*?#\|.*?(?<!\|#|#\|)\n.*?(?<!#\|)\|#", "",
+                                  text_cleaned, flags=re.MULTILINE)
+    else:
+        raise NotImplementedError("Can't remove comments for "
+                                  "source code in that language!")
+
+    return text_cleaned
 
 
 def convert_chinese_punctuation(text):
@@ -216,7 +277,7 @@ def extract_amazon_reviews(text, by_user=True):
 
 def extract_blogs(text, remove_hyperlinks=False):
     blogs = []
-    for fragment in text.split("<post>"):
+    for fragment in text.split("<post>")[1:]:
         blog = fragment.split("</post>")[0]
         blog = blog.replace("&nbsp;", "")
         if remove_hyperlinks:
@@ -272,7 +333,8 @@ def extract_wiki_articles(text):
         article_cleaned = article_cleaned.replace("<h>", "").replace("</h>", "")
         article_cleaned = convert_chinese_punctuation(article_cleaned)
 
-        article_by_name[name] = remove_excess_whitespace(article_cleaned)
+        article_by_name[name] = (name + "\n\n" 
+            + remove_excess_whitespace(article_cleaned))
 
     return article_by_name
 
@@ -283,8 +345,8 @@ def clean_gutenberg_text(text):
     return remove_excess_whitespace(text_cleaned)
 
 
-def get_name_gutenberg(file_name):
-    return file_name.split("___")[0]
+def get_author_title_gutenberg(file_name):
+    return file_name.split("___")
 
 
 def clean_chambers_rostand_text(text):
@@ -392,3 +454,76 @@ def clean_abu_corpus_text(text):
     return remove_excess_whitespace(cleaned_text)
 
 
+def prepare_amazon_reviews(root_path):
+    file_names = get_files_from_directory(root_path, ".json")
+    for file_name in file_names:
+        processed_file_name = file_name[:-5] + "_processed.tar"
+        with open(os.path.join(root_path, file_name), "r") as review_file:
+            review_text = review_file.read()
+        reviews_by_user = extract_amazon_reviews(review_text)
+        with tarfile.TarFile(
+                os.path.join(root_path, processed_file_name), "w") as tar_file:
+            for user in reviews_by_user:
+                review_string = "\n\n".join(reviews_by_user[user])
+                user_file_name = str(user) + "_reviews_processed.txt"
+                add_text_file(tar_file, review_string, user_file_name)
+
+
+def prepare_blogs(root_path):
+    file_names = get_files_from_directory(root_path, ".xml")
+    for file_name in file_names:
+        processed_file_name = (get_blog_author_id(file_name) 
+                               + "_blogs_processed.txt")
+        with open(os.path.join(root_path, file_name), "r") as blog_file:
+            blog_text = blog_file.read()
+        blogs = extract_blogs(blog_text)
+        with open(os.path.join(
+                root_path, processed_file_name), "w") as processed_blog_file:
+            processed_blog_file.write("\n\n".join(blogs))
+
+
+def prepare_brown_corpus(root_path):
+    categories = invert_mapping(extract_brown_corpus_categories(
+        os.path.join(root_path, "cats.txt")))
+    file_names = get_files_from_directory(root_path)
+    for file_name in file_names:
+        if re.fullmatch(r"[a-zA-Z]{2}[0-9]{2}", file_name):
+            with open(os.path.join(root_path, file_name), "r") as text_file:
+                text = text_file.read()
+            cleaned_text = clean_brown_corpus_text(text)
+            processed_file_name = file_name + "_processed.txt"
+            with open(os.path.join(categories[file_name], 
+                    processed_file_name), "w") as processed_text_file:
+                processed_text_file.write(cleaned_text)
+
+
+def prepare_wiki_corpus(root_path):
+    file_names = get_files_from_directory(root_path)
+    file_name = [file_name for file_name in file_names 
+                 if "corpus-processed" in file_name][0]
+    processed_file_name = file_name[:-4] + "-further.tar"
+    with open(os.path.join(root_path, file_name), "r") as wiki_file:
+        wiki_text = wiki_file.read()
+    articles_by_name = extract_wiki_articles(wiki_text)
+    with tarfile.TarFile(
+            os.path.join(root_path, processed_file_name), "w") as tar_file:
+        for name, article in articles_by_name.items():
+            article_file_name = name.replace(" ", "_") + ".txt"
+            add_text_file(tar_file, article, article_file_name)
+
+
+def prepare_gutenberg_corpus(root_path):
+    file_names = get_files_from_directory(root_path, ".txt")
+    for file_name in file_names:
+        with open(os.path.join(root_path, file_name), "r") as text_file:
+            text = text_file.read()
+        cleaned_text = clean_gutenberg_text(text)
+        author, title = get_author_title_gutenberg(file_name)
+        author = author.lower().replace(" ", "_")
+        with open(os.path.join(os.path.join(
+                root_path, author), title), "w") as processed_file_name:
+            processed_file_name.write(cleaned_text)
+
+
+def prepare_chambers_rostand_texts(root_path):
+    pass
