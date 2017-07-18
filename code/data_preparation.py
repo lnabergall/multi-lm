@@ -21,6 +21,10 @@ BASE_DIR = os.path.join(os.path.join(os.pardir, "data"), "language_modeling")
 if not os.path.exists(BASE_DIR):
     raise NotImplementedError("Can't work from current directory!")
 
+# To mitigate file path character limit issue
+BASE_DIR = ("C:\\Users\\lnabe\\Dropbox\\Artificial Intelligence and Robotics\\"
+            "learning-language\\data\\language_modeling")
+
 NATURAL_LANGUAGE = "natural_language"
 PROGRAMMING_LANGUAGE = "programming_language"
 MARKUP_LANGUAGE = "markup_language"
@@ -253,31 +257,31 @@ def convert_spaces_to_tabs(code_text):
 def remove_multiline_comments(code_text, language):
     if language == PYTHON:
         text_cleaned = re.sub(r"^\s*?\"\"\".*?(?<!\"\"\")\n.*?\"\"\"", "", 
-                              code_text, flags=re.MULTILINE)
+                              code_text, flags=re.MULTILINE|re.DOTALL)
         text_cleaned = re.sub(r"^\s*?\'\'\'.*?\n.*?\'\'\'", "", 
-                              text_cleaned, flags=re.MULTILINE)
+                              text_cleaned, flags=re.MULTILINE|re.DOTALL)
         text_cleaned = re.sub(r"^(\s*?#.*?\n){2,}", "", 
-                              text_cleaned, flags=re.MULTILINE)
+                              text_cleaned, flags=re.MULTILINE|re.DOTALL)
     elif language == C:
         text_cleaned = re.sub(r"^\s*?/\*.*?(?<!\*/)\n.*?\*/", "", 
-                              code_text, flags=re.MULTILINE)
+                              code_text, flags=re.MULTILINE|re.DOTALL)
         text_cleaned = re.sub(r"^(\s*?//.*?\n){2,}", "", 
-                              text_cleaned, flags=re.MULTILINE)
+                              text_cleaned, flags=re.MULTILINE|re.DOTALL)
     elif language == FORTRAN:
-        text_cleaned = re.sub(r"^([\*cCdD].*?\n){2,}", "", 
-                              code_text, flags=re.MULTILINE)
+        text_cleaned = re.sub(r"^([\*cCdD]\s.*?\n){2,}", "", 
+                              code_text, flags=re.MULTILINE|re.DOTALL)
         text_cleaned = re.sub(r"^(\s*?!.*?\n){2,}", "",
-                              text_cleaned, flags=re.MULTILINE)
+                              text_cleaned, flags=re.MULTILINE|re.DOTALL)
     elif language == LISP:
         text_cleaned = re.sub(r"^\s*?\".*?(?<!\")\n.*?\"", "", 
-                              code_text, flags=re.MULTILINE)
+                              code_text, flags=re.MULTILINE|re.DOTALL)
         text_cleaned = re.sub(r"^(\s*?;.*?\n){2,}", "", 
-                              text_cleaned, flags=re.MULTILINE)
+                              text_cleaned, flags=re.MULTILINE|re.DOTALL)
         text_cleaned_prev = text_cleaned
         while text_cleaned != text_cleaned_prev:
             text_cleaned_prev = text_cleaned
             text_cleaned = re.sub(r"^\s*?#\|.*?(?<!\|#|#\|)\n.*?(?<!#\|)\|#", "",
-                                  text_cleaned, flags=re.MULTILINE)
+                                  text_cleaned, flags=re.MULTILINE|re.DOTALL)
     else:
         raise NotImplementedError("Can't remove comments for "
                                   "source code in that language!")
@@ -533,6 +537,7 @@ def extract_leiden_weibo_messages(csv_text):
 
 
 def prepare_corpus_folder(corpus_name, root_path):
+    root_path = "\\\\?\\" + root_path  # Mitigate character limit
     print("\nPreparing", corpus_name + "...")
     # Get file names
     if corpus_name in [GUTENBERG, CHAMBERS_ROSTAND_CORPUS, ABU_CORPUS, 
@@ -660,6 +665,7 @@ def prepare_corpus_folder(corpus_name, root_path):
 
 
 def prepare_source_code(file_path):
+    file_path = "\\\\?\\" + file_path  # Mitigate character limit
     source_code = open_file(file_path)
     source_code = UnicodeDammit(source_code).unicode_markup
     language = detect_language(file_path, source_code=True)
@@ -677,7 +683,7 @@ def prepare_datasets(root_path):
             if directory_path.split("\\")[-1] == PROGRAMMING_LANGUAGE:
                 print("\nPreparing programming language datasets...")
             for file_name in file_names:
-                if "".join(file_name.split(".")[:-1]).endswith("_processed"):
+                if ".".join(file_name.split(".")[:-1]).endswith("_processed"):
                     continue
                 file_path = os.path.join(directory_path, file_name)
                 for programming_language in [C, PYTHON, FORTRAN, LISP]:
