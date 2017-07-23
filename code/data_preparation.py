@@ -4,16 +4,10 @@ import os
 import re
 import tarfile
 import io
-import tokenize as py_token
 from time import time
 
 import textacy
 import cchardet
-from pygments import lex
-from pygments.lexers.python import PythonLexer
-from pygments.lexers.c_cpp import CLexer
-from pygments.lexers.fortran import FortranFixedLexer, FortranLexer
-from pygments.lexers.lisp import CommonLispLexer
 from bs4 import UnicodeDammit
 
 
@@ -87,8 +81,9 @@ def get_files_from_directory(root_path, extension=None):
     return files
 
 
-def open_file(file_path):
-    encoding = get_encoding(file_path)
+def open_file(file_path, encoding=None):
+    if not encoding:
+        encoding = get_encoding(file_path)
     try:
         with open(file_path, "r", encoding=encoding) as text_file:
             text = text_file.read()
@@ -115,7 +110,8 @@ def get_encoding(file_path):
         text = file.read()
     return cchardet.detect(text)["encoding"]
 
-def detect_language(file_path, source_code=False):
+
+def detect_language(file_path, text=None, source_code=False):
     language = None
     file_path_lower = file_path.lower()
     if file_path_lower.endswith(".py") or file_path_lower.endswith(".pyw"):
@@ -133,7 +129,8 @@ def detect_language(file_path, source_code=False):
         language = LISP
     else:
         if not source_code:
-            text = open_file(file_path)
+            if text is None:
+                text = open_file(file_path)
             if textacy.text_utils.detect_language(text).lower() == "en":
                 language = ENGLISH
             elif textacy.text_utils.detect_language(text).lower() == "fr":
@@ -144,37 +141,6 @@ def detect_language(file_path, source_code=False):
                 language = CHINESE
 
     return language
-
-
-def tokenize(file_path, use_native_python=False):
-    with open(file_path) as text_file:
-        text = text_file.read()
-    if detect_language(file_path) == PYTHON:
-        if use_native_python:
-            with open(file_path, "rb") as source_file:
-                file_reader = source_file.readline
-                try:
-                    tokens = py_token.tokenize(file_reader)
-                except py_token.TokenError:
-                    tokens = None
-                else:
-                    tokens = list(token.string for token in tokens)
-        else:
-            tokens = [token_pair[1] for token_pair in lex(text, PythonLexer())]
-    elif detect_language(file_path) == C:
-        tokens = [token_pair[1] for token_pair in lex(text, CLexer())]
-    elif detect_language(file_path) == FORTRAN:
-        if file_path.lower().endswith(".f95") or file_path.lower().endswith(".f03"):
-            tokens = [token_pair[1] for token_pair in lex(text, FortranLexer())]
-        else:
-            tokens = [token_pair[1] for token_pair in lex(text, FortranFixedLexer())]
-    elif detect_language(file_path) == LISP:
-        tokens = [token_pair[1] for token_pair in lex(text, CommonLispLexer())]
-    elif detect_language(file_path) in [ENGLISH, FRENCH, GERMAN, CHINESE]:
-        document = textacy.doc.Doc(text)
-        tokens = [str(token) for token in document]
-
-    return tokens
 
 
 def get_spell_corrector():
@@ -202,39 +168,6 @@ def correct_spelling(spell_correct_dict, textacy_doc):
     return text
 
 
-def replace_rare_tokens(text_list_tokens, threshold=3):
-    """
-    Args:
-        text_list_tokens: List, expects a list of lists of tokens.
-    """
-    # Collect token counts
-    token_counts = {}
-    for text in text_list_tokens:
-        for token in text:
-            prev_count = token_counts.get(token, 0)
-            token_counts[token] = prev_count + 1
-
-    # Replace rare tokens
-    for i, text in enumerate(text_list_tokens):
-        for j, token in enumerate(text):
-            if token_counts[token] <= 3:
-                text[j] = "<UNK>"
-        text_list_tokens[i] = text
-
-    return text_list_tokens
-
-
-def store_tokens(tokens, file_path):
-    extension = file_path.split(".")[-1]
-    new_file_path = ".".join(file_path.split(".")[:-1]) + "_processed" + extension
-    if detect_language(file_path) in [ENGLISH, FRENCH, GERMAN, CHINESE]:
-        processed_text = " ".join(tokens)
-    else:
-        processed_text = "".join(tokens)
-    with open(new_file_path, "w") as processed_text_file:
-        processed_text_file.write(processed_text)
-
-
 def remove_excess_whitespace(text):
     text_cleaned = text.strip()
     for i, regex_char in enumerate(
@@ -256,31 +189,30 @@ def convert_spaces_to_tabs(code_text):
 
 def remove_multiline_comments(code_text, language):
     if language == PYTHON:
-        text_cleaned = re.sub(r"^\s*?\"\"\".*?(?<!\"\"\")\n.*?\"\"\"", "", 
+        text_cleaned = re.sub(r"^\s*?\"\"\".*?\"\"\"\s*?\n?", "", 
                               code_text, flags=re.MULTILINE|re.DOTALL)
-        text_cleaned = re.sub(r"^\s*?\'\'\'.*?\n.*?\'\'\'", "", 
+        text_cleaned = re.sub(r"^\s*?\'\'\'.*?\'\'\'\s*?\n?", "", 
                               text_cleaned, flags=re.MULTILINE|re.DOTALL)
-        text_cleaned = re.sub(r"^(\s*?#.*?\n){2,}", "", 
-                              text_cleaned, flags=re.MULTILINE|re.DOTALL)
+        text_cleaned = re.sub(r"^\s*?#.*?\n", "", 
+                              text_cleaned, flags=re.MULTILINE)
     elif language == C:
-        text_cleaned = re.sub(r"^\s*?/\*.*?(?<!\*/)\n.*?\*/", "", 
+        text_cleaned = re.sub(r"^\s*?/\*[^*]*\*+(?:[^/*][^*]*\*+)*/\s*?\n?", "", 
                               code_text, flags=re.MULTILINE|re.DOTALL)
-        text_cleaned = re.sub(r"^(\s*?//.*?\n){2,}", "", 
-                              text_cleaned, flags=re.MULTILINE|re.DOTALL)
+        text_cleaned = re.sub(r"^\s*?//.*?\n", "", 
+                              text_cleaned, flags=re.MULTILINE)
     elif language == FORTRAN:
-        text_cleaned = re.sub(r"^([\*cCdD]\s.*?\n){2,}", "", 
-                              code_text, flags=re.MULTILINE|re.DOTALL)
-        text_cleaned = re.sub(r"^(\s*?!.*?\n){2,}", "",
-                              text_cleaned, flags=re.MULTILINE|re.DOTALL)
+        text_cleaned = re.sub(r"^[\*cCdD]\s.*?\n", "", 
+                              code_text, flags=re.MULTILINE)
+        text_cleaned = re.sub(r"^\s*?!.*?\n", "",
+                              text_cleaned, flags=re.MULTILINE)
     elif language == LISP:
-        text_cleaned = re.sub(r"^\s*?\".*?(?<!\")\n.*?\"", "", 
-                              code_text, flags=re.MULTILINE|re.DOTALL)
-        text_cleaned = re.sub(r"^(\s*?;.*?\n){2,}", "", 
-                              text_cleaned, flags=re.MULTILINE|re.DOTALL)
+        # Note: doesn't remove 'docstrings'
+        text_cleaned = re.sub(r"^\s*?;.*?\n", "", 
+                              code_text, flags=re.MULTILINE)
         text_cleaned_prev = text_cleaned
         while text_cleaned != text_cleaned_prev:
             text_cleaned_prev = text_cleaned
-            text_cleaned = re.sub(r"^\s*?#\|.*?(?<!\|#|#\|)\n.*?(?<!#\|)\|#", "",
+            text_cleaned = re.sub(r"^\s*?#\|(?:(?!#\|).)*?\|#\s*?\n?", "",
                                   text_cleaned, flags=re.MULTILINE|re.DOTALL)
     else:
         raise NotImplementedError("Can't remove comments for "
@@ -449,12 +381,15 @@ def clean_abu_corpus_text(text):
     return remove_excess_whitespace(cleaned_text)
 
 
-def get_author_abu_text(text):
+def get_author_genre_abu_text(text):
     author_names = re.findall(r"<IDENT_AUTEURS (.*?)>", text)
+    genres = re.findall(r"<GENRE (.*?)>", text)
     if len(author_names) != 1:
         raise ValueError("No unique author name found!")
+    elif len(genres) != 1:
+        raise ValueError("No unique genre found!")
     else:
-        return author_names[0]
+        return author_names[0], genres[0]
 
 
 def clean_german_bible_text(text):
@@ -494,6 +429,11 @@ def extract_parole_corpus_documents(text):
 
 
 def extract_lancaster_documents(text):
+    domains = re.findall(r"<text ID=.*? TYPE=\"(.*?)\">", text)
+    if len(domains) != 1:
+        raise ValueError("No unique domain found!")
+    else:
+        domain = domains[0]
     documents = re.split(r"<file ID=.*?>", text)[1:]
     cleaned_documents = []
     for document in documents:
@@ -515,7 +455,7 @@ def extract_lancaster_documents(text):
             if document.strip():
                 cleaned_documents.append(convert_chinese_punctuation(document))
 
-    return cleaned_documents
+    return cleaned_documents, domain
 
 
 def extract_leiden_weibo_messages(csv_text):
@@ -615,9 +555,10 @@ def prepare_corpus_folder(corpus_name, root_path):
                 processed_file_root = os.path.join(root_path, storyteller)
             elif corpus_name == ABU_CORPUS:
                 cleaned_text = clean_abu_corpus_text(text)
-                author = get_author_abu_text(text)
+                author, genre = get_author_genre_abu_text(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
-                processed_file_root = os.path.join(root_path, author)
+                processed_file_root = os.path.join(
+                    root_path, os.path.join(genre, author))
             elif corpus_name == GERMAN_BIBLE:
                 cleaned_text = clean_german_bible_text(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
@@ -630,8 +571,9 @@ def prepare_corpus_folder(corpus_name, root_path):
                 cleaned_texts = extract_parole_corpus_documents(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
             elif corpus_name == LANCASTER_CORPUS:
-                cleaned_texts = extract_lancaster_documents(text)
+                cleaned_texts, domain = extract_lancaster_documents(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
+                processed_file_root = os.path.join(root_path, domain)
             elif corpus_name == LEIDEN_WEIBO_CORPUS:
                 cleaned_texts = extract_leiden_weibo_messages(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
@@ -639,7 +581,7 @@ def prepare_corpus_folder(corpus_name, root_path):
                 processed_file_path = os.path.join(root_path, processed_file_name)
             else:
                 try:
-                    os.mkdir(processed_file_root)
+                    os.makedirs(processed_file_root)
                 except FileExistsError:
                     pass
                 processed_file_path = os.path.join(processed_file_root, 
