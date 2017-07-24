@@ -5,6 +5,7 @@ import shutil
 import tarfile
 import tokenize as py_token
 from collections import Counter
+from random import shuffle
 
 import textacy
 import tensorflow as tf
@@ -17,8 +18,9 @@ from bs4 import UnicodeDammit
 from tensor2tensor.data_generators.text_encoder import (
     TokenTextEncoder, EOS, RESERVED_TOKENS)
 
-from data_preparation import (get_files_from_directory, open_file, 
-                              get_encoding, detect_language, BASE_DIR)
+from data_preparation import (get_files_from_directory, open_file,
+                              get_encoding, detect_language, BASE_DIR, 
+                              CustomTarFile, open_tarfile)
 
 
 # Classification type tuples: ("folder-name", "category1", "category2", ...)
@@ -90,15 +92,16 @@ class CustomTokenTextEncoder(TokenTextEncoder):
 
 class Document:
 
-    def __init__(self, text, classification, file_name):
+    def __init__(self, text, classification, file_name, file_path):
         self.text = text
         self.classification = classification
         self.language = self.classification[1]
         self.file_name = file_name
+        self.file_path = file_path
         self._tokenize()
 
     def _tokenize(self):
-        self.tokens = tokenize(text, self.language, self.file_name)
+        self.tokens = tokenize(text, self.language, self.file_path)
 
     def _detokenize(self):
         raise NotImplementedError
@@ -123,11 +126,23 @@ class Corpus:
         self._build_vocabulary()
         self._save_vocabulary()
 
+    def _add_to_partition(self, directory_path, document):
+        if directory_path.endswith("training"):
+            self.training_documents.append(document)
+        elif directory_path.endswith("validation"):
+            self.validation_documents.append(document)
+        elif directory_path.endswith("test"):
+            self.test_documents.append(document)
+
     def _load_processed_text(self):
         self.documents = []
+        self.training_documents = []
+        self.validation_documents = []
+        self.test_documents = []
         for dir_path, dir_names, file_names in os.walk(self.directory_path):
             for file_name in file_names:
                 if file_name.split(".")[-2].endswith("_processed"):
+                    file_path = os.path.join(dir_path, file_name)
                     classification = get_classification(dir_path)
                     if file_name.endswith(".tar"):
                         texts, file_names = open_tarfile(
@@ -135,12 +150,14 @@ class Corpus:
                             encoding="utf-8")
                         for text, file_name in zip(texts, file_names):
                             self.documents.append(
-                                Document(text, classification, file_name))
+                                Document(text, classification, file_name, file_path))
+                            self._add_to_partition(dir_path, self.documents[-1])
                     else:
                         text = open_file(os.path.join(dir_path, file_name), 
                                          encoding="utf-8")
                         self.documents.append(
-                            Document(text, classification, file_name))
+                            Document(text, classification, file_name, file_path))
+                        self._add_to_partition(dir_path, self.documents[-1])
         self.token_count = sum(len(document.tokens) for document in self.documents)
 
     def _build_vocabulary(self):
@@ -154,8 +171,52 @@ class Corpus:
             for token, count in self.vocabulary.items():
                 print(token + ", " + count, file=vocab_file)
 
-    def partition(self, training=0.8, validation=0.1, test=0.1):
-        pass
+    def partition(self, training=0.8, validation=0.1):
+        shuffle(self.documents)
+        training_count = int(training*len(self.documents))
+        validation_count = int(validation*len(self.documents))
+        self.training_documents = [
+            document for i, document in enumerate(self.documents) 
+            if i in range(training_count)]
+        self.validation_documents = [
+            document for i, document in enumerate(self.documents) 
+            if i in range(training_count, training_count + validation_count)]
+        self.test_documents = [
+            document for i, document in enumerate(self.documents) 
+            if i in range(training_count + validation_count, len(self.documents))]
+
+        tar_file_indicators = [".tar" in document.file_path 
+                               for document in self.documents]
+        if all(tar_file_indicators):
+            if len(set(document.file_path for document in self.documents)) != 1:
+                raise NotImplementedError("Can't partition multiple tar files!")
+            with CustomTarFile(self.documents[0].file_path, "r") as tar:
+                for document_set, folder_name in [
+                        (self.training_documents, "training"), 
+                        (self.validation_documents, "validation"),
+                        (self.test_documents, "test")]:
+                    new_file_path = new_file_path = (
+                        "\\".join(document.file_path.split("\\")[:-1]) + "\\"
+                        + folder_name + "\\" + document.file_path.split("\\")[-1])
+                    file_names = [document.file_name for document in document_set]
+                    tar.partial_copy(new_file_path, file_names)
+        elif not any(tar_file_indicators):
+            for document in self.documents:
+                if document in self.training_documents:
+                    folder_name = "training"
+                elif document in self.validation_documents:
+                    folder_name = "validation"
+                elif document in self.test_documents:
+                    folder_name = "test"
+                else:
+                    raise RuntimeError("Unexpected exception!")
+                new_file_path = (
+                    "\\".join(document.file_path.split("\\")[:-1]) + "\\"
+                    + folder_name + "\\" + document.file_path.split("\\")[-1])
+                shutil.move(document.file_path, new_file_path)
+                document.file_path = new_file_path
+        else:
+            raise RuntimeError("Unexpected file types!")
 
     def _detokenize(self):
         raise NotImplementedError
@@ -183,7 +244,6 @@ class DatasetCollection:
 
         self._build_vocabulary(vocab_size)
         self._save_vocabulary()
-        self._partition_datasets()
 
     def _build_vocabulary(self, vocab_size=None):
         self.vocabulary = Counter()
@@ -201,7 +261,7 @@ class DatasetCollection:
                 print(token + ", " + count, file=vocab_file)
         self.text_encoder = CustomTokenTextEncoder(self.vocab_file_path)
 
-    def _partition_datasets(self):
+    def partition_datasets(self):
         for corpus in self.corpora:
             corpus.partition()
 
@@ -221,19 +281,6 @@ class DatasetCollection:
 
     def _generator(self):
         pass
-
-
-def open_tarfile(tarfile_path, encoding=None):
-    tar = tarfile.TarFile(tarfile_path)
-    texts = []
-    file_names = []
-    for file_name in tar.getnames():
-        text_file = tar.extractfile(file_name)
-        text = open_file(text_file, encoding)
-        file_names.append(file_name)
-        texts.append(text)
-
-    return texts, file_names
 
 
 def get_classification(directory_path):
