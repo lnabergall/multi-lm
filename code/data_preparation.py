@@ -81,6 +81,16 @@ class CustomTarFile(tarfile.TarFile):
 
         return texts, file_names
 
+    def read_lines(self, encoding=None):
+        for file_name in self.get_names():
+            text_tarinfo = self.getmember(file_name)
+            text_file = self.extractfile(file_name)
+            if not encoding:
+                encoding = get_encoding(file_object=text_file)
+            text_buffer = text_tarinfo.tobuf(encoding=encoding)
+            for line in text_buffer:
+                yield line
+
     def add_text_file(self, string, file_name):
         string_file = io.BytesIO(string.encode("utf-8"))
         tarinfo = tarfile.TarInfo(file_name)
