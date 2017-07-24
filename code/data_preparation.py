@@ -63,6 +63,38 @@ CHINESE_WIKI = "zhwiki-20140804-corpus.xml"
 LEIDEN_WEIBO_CORPUS = "leiden_weibo_corpus-messages"
 
 
+class CustomTarFile(tarfile.TarFile):
+    """
+    Higher-level interface for manipulating tar files; built upon TarFile.
+    """
+    def read_files(self, encoding=None):
+        texts = []
+        file_names = []
+        for file_name in self.getnames():
+            text_tarinfo = self.getmember(file_name)
+            text_file = self.extractfile(file_name)
+            if not encoding:
+                encoding = get_encoding(file_object=text_file)
+            text = text_tarinfo.tobuf(encoding=encoding).read()
+            file_names.append(file_name)
+            texts.append(text)
+
+        return texts, file_names
+
+    def add_text_file(self, string, file_name):
+        string_file = io.BytesIO(string.encode("utf-8"))
+        tarinfo = tarfile.TarInfo(file_name)
+        tarinfo.size = len(string)
+        self.addfile(tarinfo, string_file)
+
+    def partial_copy(self, copy_name, file_names):
+        texts, text_names = self.read_files()
+        with CustomTarFile.open(copy_name, "w") as tar:
+            for text, name in zip(texts, text_names):
+                if name in file_names:
+                    tar.add_text_file(text, name)
+
+
 def invert_mapping(mapping):
     inverse_mapping = {}
     for key, values in mapping.items():
@@ -98,16 +130,17 @@ def open_file(file_path, encoding=None):
     return text
 
 
-def add_text_file(tar, string, file_name):
-    string_file = io.BytesIO(string.encode("utf-8"))
-    tarinfo = tarfile.TarInfo(file_name)
-    tarinfo.size = len(string)
-    tar.addfile(tarinfo, string_file)
+def open_tarfile(path, encoding=None):
+    with CustomTarFile(path, "r") as tar:
+        return tar.read_files(encoding)
 
 
-def get_encoding(file_path):
-    with open(file_path, "rb") as file:
-        text = file.read()
+def get_encoding(file_path=None, file_object=None):
+    if not file_object:
+        with open(file_path, "rb") as file:
+            text = file.read()
+    else:
+        text = file_object.read()
     return cchardet.detect(text)["encoding"]
 
 
@@ -511,11 +544,11 @@ def prepare_corpus_folder(corpus_name, root_path):
         wiki_text = open_file(os.path.join(root_path, file_name))
         wiki_text = UnicodeDammit(wiki_text).unicode_markup
         articles_by_name = extract_wiki_articles(wiki_text)
-        with tarfile.TarFile(
+        with CustomTarFile(
                 os.path.join(root_path, processed_file_name), "w") as tar_file:
             for name, article in articles_by_name.items():
-                article_file_name = name.replace(" ", "_") + ".txt"
-                add_text_file(tar_file, article, article_file_name)
+                article_file_name = name + ".txt"
+                tar_file.add_text_file(article, article_file_name)
     else:
         for file_name in file_names:
             if ".".join(file_name.split(".")[:-1]).endswith("_processed"):
@@ -587,12 +620,12 @@ def prepare_corpus_folder(corpus_name, root_path):
                 processed_file_path = os.path.join(processed_file_root, 
                                                    processed_file_name)
             if corpus_name == AMAZON_REVIEWS:
-                with tarfile.TarFile(os.path.join(
+                with CustomTarFile(os.path.join(
                         root_path, processed_file_name), "w") as tar_file:
                     for user in reviews_by_user:
                         review_string = "\n\n".join(reviews_by_user[user])
                         user_file_name = str(user) + "_reviews_processed.txt"
-                        add_text_file(tar_file, review_string, user_file_name)
+                        tar_file.add_text_file(review_string, user_file_name)
             else:
                 try:
                     with open(processed_file_path, 
