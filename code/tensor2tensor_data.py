@@ -20,8 +20,11 @@ from pygments.lexers.c_cpp import CLexer
 from pygments.lexers.fortran import FortranFixedLexer, FortranLexer
 from pygments.lexers.lisp import CommonLispLexer
 from bs4 import UnicodeDammit
+from tensor2tensor.data_generators import generator_utils
 from tensor2tensor.data_generators.text_encoder import (
     TokenTextEncoder, EOS, RESERVED_TOKENS)
+from tensor2tensor.data_generators.problem import Problem
+from tensor2tensor.utils import registry
 
 from data_preparation import (get_files_from_directory, open_file,
                               get_encoding, detect_language, BASE_DIR, 
@@ -190,6 +193,26 @@ def get_gutenberg_dataset():
     corpora_info = get_corpora(corpora=[GUTENBERG[1],])
 
     return directory_path, corpora_info, vocab_size
+
+
+@registry.register_problem("multi_lm_gutenberg")
+class MultiLmGutenberg(Problem):
+
+    def generate_data(self, data_dir, tmp_dir):
+        training_generator = training_generator(get_gutenberg_dataset)
+        validation_generator = validation_generator(get_gutenberg_dataset)
+        data_paths = [os.path.join(BASE_DIR, "t2t_data")]
+        generator_utils.generate_dataset_and_shuffle(
+            training_generator, data_paths, validation_generator, data_paths)
+
+    def dataset_filename(self):
+        return BASE_DIR
+
+    def hparams(self, defaults, model_hparams):
+        pass
+
+    def feature_encoders(self, data_dir):
+        pass
 
 
 def get_english_wiki_dataset():
@@ -513,15 +536,15 @@ class DatasetCollection:
                                    "targets": encoded_tokens[1:]}
 
 
-def training_generator():
+def training_generator(dataset_info_function):
     """Training data generator to be called."""
-    dataset_collection = DatasetCollection(get_gutenberg_dataset()*)
+    dataset_collection = DatasetCollection(dataset_info_function()*)
     return dataset_collection.training_generator()
 
 
-def validation_generator():
+def validation_generator(dataset_info_function):
     """Validation data generator to be called."""
-    dataset_collection = DatasetCollection(get_gutenberg_dataset()*)
+    dataset_collection = DatasetCollection(dataset_info_function()*)
     return dataset_collection.validation_generator()
 
 
