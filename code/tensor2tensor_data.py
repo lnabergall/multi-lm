@@ -576,21 +576,10 @@ def replace_rare_tokens(text_list_tokens, threshold=3):
     # Replace rare tokens
     for i, text in enumerate(text_list_tokens):
         for j, token in enumerate(text):
-            if token_counts[token] <= 3:
-                text[j] = "<UNK>"
+            if token_counts[token] <= threshold:
+                text[j] = UNKNOWN_TOKEN
         text_list_tokens[i] = text
 
     return text_list_tokens
-
-
-def store_tokens(tokens, file_path):
-    extension = file_path.split(".")[-1]
-    new_file_path = ".".join(file_path.split(".")[:-1]) + "_processed" + extension
-    if detect_language(file_path) in [ENGLISH, FRENCH, GERMAN, CHINESE]:
-        processed_text = " ".join(tokens)
-    else:
-        processed_text = "".join(tokens)
-    with open(new_file_path, "w") as processed_text_file:
-        processed_text_file.write(processed_text)
 
 
