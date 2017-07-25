@@ -1,10 +1,15 @@
-"""Classes and functions for processing and generating data."""
+"""
+Classes and functions for processing and generating data.
+
+TODO: Implement data oversampling and/or undersampling
+"""
 
 import os
+import re
 import shutil
 import tarfile
 import tokenize as py_token
-from collections import Counter
+from collections import Counter, namedtuple
 from random import shuffle
 
 import textacy
@@ -26,24 +31,24 @@ from data_preparation import (get_files_from_directory, open_file,
 BASE_DIR = ("C:\\Users\\lnabe\\Dropbox\\Artificial Intelligence and Robotics\\"
             "learning-language\\data\\language_modeling")
 
-NATURAL_LANGUAGE = ("natural_language", "natural language")
-PROGRAMMING_LANGUAGE = ("programming_language", "programming language")
-MARKUP_LANGUAGE = ("markup_language", "markup language")
+NATURAL_LANGUAGE = "natural language"
+PROGRAMMING_LANGUAGE = "programming language"
+MARKUP_LANGUAGE = "markup language"
 
-C = ("c", "c")
-PYTHON = ("python", "python")
-FORTRAN = ("fortran", "fortran")
-LISP = ("lisp", "lisp")
+C = "c"
+PYTHON = "python"
+FORTRAN = "fortran"
+LISP = "lisp"
 
-ENGLISH = ("english", "english")
-FRENCH = ("french", "french")
-GERMAN = ("german", "german")
-CHINESE = ("chinese", "chinese")
+ENGLISH = "english"
+FRENCH = "french"
+GERMAN = "german"
+CHINESE = "chinese"
 
-HTML = ("html", "html")
-LATEX = ("latex", "latex")
-YAML = ("yaml", "yaml")
-MARKDOWN = ("markdown", "markdown")
+HTML = "html"
+LATEX = "latex"
+YAML = "yaml"
+MARKDOWN = "markdown"
 
 # Classification type tuples: ("folder-name", "corpus-name", 
 #                              "category1", "category2", ...)
@@ -80,24 +85,120 @@ CHINESE_WIKI = ("zhwiki-20140804-corpus.xml",
 LEIDEN_WEIBO_CORPUS = ("leiden_weibo_corpus-messages", 
                        "leiden weibo corpus", "microblog")
 
+
 UNKNOWN_TOKEN = "<UNK>"
 
-# corpus_directory, name, classification in corpora_info
-# directory_path
-# vocab_size
 
-def get_large_dataset_info():
+def get_all_corpora_info():
+    corpora_info = []
+    for name, value in globals().items():
+        if (re.fullmatch(r"[A-Z_]+", name) 
+                and type(value) == tuple and len(value) >= 3):
+            corpora_info.append(value)
+
+    return corpora_info
+
+
+def get_corpora(language_types=None, languages=None, corpora=None):
+    corpora_info = get_all_corpora_info()
+    corpora = []
+    for dir_path, dir_names, file_names in os.walk(directory_path):
+        if "processed" in dir_names:
+            classification = get_classification(dir_path)
+            corpus_directory = dir_path.split("\\")[-1]
+            name = [dataset_info[1] for dataset_info in datasets 
+                    if dataset_info[0] == corpus_directory][0]
+            if ((language_types is not None 
+                    and classification[0] in language_types)
+                    or (languages is not None 
+                        and classification[1] in languages)
+                    or (corpora is not None and name in corpora)):
+                corpora.append(corpus_directory, name, classification)
+
+    return corpora
+
+
+def get_classification(directory_path):
+    dataset_directories = [dataset_info[0] for dataset_info 
+                           in get_all_corpora_info()]
+    directories = directory_path.split("\\")
+    base_index = [i for i, directory in enumerate(directories) 
+                  if directory == "language_modeling"][0]
+    return [directory for i, directory in enumerate(directories) 
+            if i > base_index and directory != "processed" 
+            and directory not in dataset_directories]
+
+
+def get_large_dataset():
+    """All corpora and a vocabulary size of 2000000."""
     vocab_size = 2000000
     directory_path = BASE_DIR
-    corpora_info = []
-    for dir_path, dir_names, file_names in os.walk(directory_path):
-        
+    corpora_info = get_corpora(
+        language_types=[NATURAL_LANGUAGE, PROGRAMMING_LANGUAGE])
 
     return directory_path, corpora_info, vocab_size
 
 
-def get_small_dataset_info():
-    pass
+def get_small_dataset():
+    """
+    All programming language corpora plus a corpora 
+    from each natural language; a vocabulary size of 1500000.
+    """
+    vocab_size = 1500000
+    directory_path = BASE_DIR
+    corpora_info = get_corpora(
+        language_types=[PROGRAMMING_LANGUAGE,],
+        corpora=[ENGLISH_WIKI[1], CHAMBERS_ROSTAND_CORPUS[1], 
+                 GERMAN_BIBLE[1], LEIDEN_WEIBO_CORPUS[1]])
+
+    return directory_path, corpora_info, vocab_size
+
+
+def get_natural_language_dataset():
+    """All natural language corpora and a vocabulary size of 1000000."""
+    pavocab_size = 1000000
+    directory_path = BASE_DIR
+    corpora_info = get_corpora(language_types=[NATURAL_LANGUAGE,])
+
+    return directory_path, corpora_info, vocab_size
+
+
+def get_programming_language_dataset():
+    """All programming language corpora and a vocabulary size of 1000000."""
+    pavocab_size = 1000000
+    directory_path = BASE_DIR
+    corpora_info = get_corpora(language_types=[PROGRAMMING_LANGUAGE,])
+
+    return directory_path, corpora_info, vocab_size
+
+
+def get_test_natural_language_dataset():
+    """A corpus for each natural language and a vocabulary size of 1000000."""
+    vocab_size = 1000000
+    directory_path = BASE_DIR
+    corpora_info = get_corpora(
+        corpora=[ENGLISH_WIKI[1], CHAMBERS_ROSTAND_CORPUS[1], 
+                 GERMAN_BIBLE[1], LEIDEN_WEIBO_CORPUS[1]])
+
+    return directory_path, corpora_info, vocab_size
+
+
+def get_gutenberg_dataset():
+    """The Gutenberg corpus and a vocabulary size of 250000"""
+    vocab_size = 250000
+    directory_path = BASE_DIR
+    corpora_info = get_corpora(corpora=[GUTENBERG[1],])
+
+    return directory_path, corpora_info, vocab_size
+
+
+def get_english_wiki_dataset():
+    """The English Wikipedia corpus and a vocabulary size of 500000"""
+    vocab_size = 500000
+    directory_path = BASE_DIR
+    corpora_info = get_corpora(corpora=[ENGLISH_WIKI[1],])
+
+    return directory_path, corpora_info, vocab_size
 
 
 class CustomTokenTextEncoder(TokenTextEncoder):
@@ -398,32 +499,30 @@ class DatasetCollection:
                     with CustomTarFile(file_path, "r") as tar:
                         for i, line in enumerate(tar.read_lines(encoding="utf-8")):
                             first_line = True if i == 0 else False
-                            yield self.encode_line(
+                            encoded_tokens = self.encode_line(
                                 line, document, first_line=first_line)
+                            yield {"inputs": encoded_tokens[:-1], 
+                                   "targets": encoded_tokens[1:]}
                 else:
                     with open(file_path, "r", encoding="utf-8") as file:
                         for i, line in enumerate(file):
                             first_line = True if i == 0 else False
-                            yield self.encode_line(
+                            encoded_tokens = self.encode_line(
                                 line, document, first_line=first_line)
+                            yield {"inputs": encoded_tokens[:-1], 
+                                   "targets": encoded_tokens[1:]}
 
 
 def training_generator():
     """Training data generator to be called."""
-    pass
+    dataset_collection = DatasetCollection(get_gutenberg_dataset()*)
+    return dataset_collection.training_generator()
 
 
 def validation_generator():
     """Validation data generator to be called."""
-    pass
-
-
-def get_classification(directory_path):
-    directories = directory_path.split("\\")
-    base_index = [i for i, directory in enumerate(directories) 
-                  if directory == "language_modeling"][0]
-    return [directory for i, directory in enumerate(directories) 
-            if i > base_index and directory != "processed"]
+    dataset_collection = DatasetCollection(get_gutenberg_dataset()*)
+    return dataset_collection.validation_generator()
 
 
 def tokenize(text, language, file_name):
