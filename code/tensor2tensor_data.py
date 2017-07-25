@@ -23,7 +23,8 @@ from data_preparation import (get_files_from_directory, open_file,
                               CustomTarFile, open_tarfile)
 
 
-# Classification type tuples: ("folder-name", "category1", "category2", ...)
+BASE_DIR = ("C:\\Users\\lnabe\\Dropbox\\Artificial Intelligence and Robotics\\"
+            "learning-language\\data\\language_modeling")
 
 NATURAL_LANGUAGE = ("natural_language", "natural language")
 PROGRAMMING_LANGUAGE = ("programming_language", "programming language")
@@ -44,32 +45,66 @@ LATEX = ("latex", "latex")
 YAML = ("yaml", "yaml")
 MARKDOWN = ("markdown", "markdown")
 
+# Classification type tuples: ("folder-name", "corpus-name", 
+#                              "category1", "category2", ...)
+
 # English datasets
-AMAZON_REVIEWS = ("amazon_reviews", "amazon review")
-BLOG_CORPUS = ("blog_authorship_corpus", "blog")
-BROWN_CORPUS = ("brown_corpus", None)
-ENGLISH_WIKI = ("enwiki-20140707-corpus.xml", "wikipedia")
-GUTENBERG = ("gutenberg", "book")
+AMAZON_REVIEWS = ("amazon_reviews", "amazon review corpus", "amazon review")
+BLOG_CORPUS = ("blog_authorship_corpus", "blog authorship corpus", "blog")
+BROWN_CORPUS = ("brown_corpus", "brown corpus", None)
+ENGLISH_WIKI = ("enwiki-20140707-corpus.xml", 
+                "english wikipedia corpus", "wikipedia")
+GUTENBERG = ("gutenberg", "gutenberg dataset", "book")
 
 # French datasets
-CHAMBERS_ROSTAND_CORPUS = ("chambers_rostand_journalistic_corpus", "news")
-FRENCH_WIKI = ("frwiki-20140804-corpus.xml", "wikipedia")
-ORAL_NARRATIVE_CORPUS = ("oral_narrative_corpus", "speech", "narrative")
-ABU_CORPUS = ("abu_corpus", None)
+CHAMBERS_ROSTAND_CORPUS = ("chambers_rostand_journalistic_corpus", 
+                           "chambers-rostand journalistic corpus", "news")
+FRENCH_WIKI = ("frwiki-20140804-corpus.xml", 
+               "french wikipedia corpus", "wikipedia")
+ORAL_NARRATIVE_CORPUS = ("oral_narrative_corpus", "french oral narrative corpus", 
+                         "speech", "narrative")
+ABU_CORPUS = ("abu_corpus", "abu corpus", None)
 
 # German datasets
-GERMAN_BIBLE = ("german_bible", "bible")
-GERMAN_WIKI = ("dewiki-20140725-corpus.xml", "wikipedia")
-GERMANC = ("GerManC", None)
-PAROLE_CORPUS = ("parole_corpus", None)
+GERMAN_BIBLE = ("german_bible", "german bible", "bible")
+GERMAN_WIKI = ("dewiki-20140725-corpus.xml", 
+               "german wikipedia corpus", "wikipedia")
+GERMANC = ("GerManC", "germanc corpus", None)
+PAROLE_CORPUS = ("parole_corpus", "german parole corpus", None)
 
 # Chinese datasets
-LANCASTER_CORPUS = ("lancaster_mandarin_corpus", None)
-CHINESE_WIKI = ("zhwiki-20140804-corpus.xml", "wikipedia")
-LEIDEN_WEIBO_CORPUS = ("leiden_weibo_corpus-messages", "microblog")
+LANCASTER_CORPUS = ("lancaster_mandarin_corpus", 
+                    "lancaster mandarin corpus", None)
+CHINESE_WIKI = ("zhwiki-20140804-corpus.xml", 
+                "chinese wikipedia corpus", "wikipedia")
+LEIDEN_WEIBO_CORPUS = ("leiden_weibo_corpus-messages", 
+                       "leiden weibo corpus", "microblog")
+
+UNKNOWN_TOKEN = "<UNK>"
+
+# corpus_directory, name, classification in corpora_info
+# directory_path
+# vocab_size
+
+def get_large_dataset_info():
+    vocab_size = 2000000
+    directory_path = BASE_DIR
+    corpora_info = []
+    for dir_path, dir_names, file_names in os.walk(directory_path):
+        
+
+    return directory_path, corpora_info, vocab_size
+
+
+def get_small_dataset_info():
+    pass
 
 
 class CustomTokenTextEncoder(TokenTextEncoder):
+
+    def __init__(self, *args, extra_tokens=[], **kwargs):
+        super(CustomTokenTextEncoder, self).__init__(*args, **kwargs)
+        self._extra_tokens = extra_tokens
 
     def _load_vocab_from_file(self, file_path):
         self._token_to_id = {}
@@ -88,7 +123,10 @@ class CustomTokenTextEncoder(TokenTextEncoder):
                 tok, _ = line.rstrip().split(", ")
                 self._token_to_id[tok] = idx
                 self._id_to_token[idx] = tok
-
+            for tok in self._extra_tokens:
+                idx += 1
+                self._token_to_id[tok] = idx
+                self._id_to_token[idx] = tok
 
 class Document:
 
@@ -103,18 +141,22 @@ class Document:
             self._tokenize()
 
     def _tokenize(self):
-        self.tokens = tokenize(self.text, self.language, self.file_path)
+        self.tokens = tokenize(self.text, self.language, self.file_name)
 
     def _detokenize(self):
         raise NotImplementedError
 
-    def encode(self, encoder):
+    def _encode(self, encoder):
         self.ids = encoder.encode(self.tokens)
-        return self.ids
 
-    def decode(self, encoder):
-        self.tokens = decoder.decode(self.ids)
-        return encoder.decode(self.ids)
+    def _decode(self, encoder):
+        self.tokens = encoder.decode(self.ids)
+
+    def tokenize(self, string):
+        return tokenize(string, self.language, self.file_name)
+
+    def encode(self, tokens, encoder):
+        return encoder.encoder(tokens)
 
 
 class Corpus:
@@ -248,11 +290,11 @@ class Corpus:
     def _detokenize(self):
         raise NotImplementedError
 
-    def encode(self, encoder):
+    def _encode(self, encoder):
         for document in self.documents:
             document.encode(encoder)
 
-    def decode(self, encoder):
+    def _decode(self, encoder):
         for document in self.documents:
             document.decode(encoder)
 
@@ -269,15 +311,15 @@ class DatasetCollection:
                 Corpus(name, corpus_directory_path, 
                        classification, load_texts=load_texts))
 
+        self.unknown_token = UNKNOWN_TOKEN
         if load_texts:
             self.token_count = sum(corpus.token_count for corpus in self.corpora) 
             self._build_vocabulary(vocab_size)
             self._save_vocabulary()
         else:
-            # Assumes the path of the vocabulary file
-            self.vocab_file_path = os.path.join(
-                self.directory_path, "vocabulary_" + str(vocab_size) + ".txt")
-            self.text_encoder = CustomTokenTextEncoder(self.vocab_file_path)
+            self._load_vocabulary()
+            self.text_encoder = CustomTokenTextEncoder(
+                self.vocab_file_path, extra_tokens=[self.tag_token,])
 
     def _build_vocabulary(self, vocab_size=None):
         self.vocabulary = Counter()
@@ -285,6 +327,7 @@ class DatasetCollection:
             self.vocabulary.update(corpus.vocabulary)
         self.truncated_vocabulary = {token: count for token, count 
                                      in self.vocabulary.most_common(vocab_size)}
+        self._assign_tag_token()
 
     def _save_vocabulary(self):
         vocab_size = len(self.truncated_vocabulary)
@@ -294,6 +337,26 @@ class DatasetCollection:
             for token, count in self.truncated_vocabulary.items():
                 print(token + ", " + count, file=vocab_file)
         self.text_encoder = CustomTokenTextEncoder(self.vocab_file_path)
+
+    def _load_vocabulary(self):
+        # Assumes the path of the vocabulary file
+        self.vocab_file_path = os.path.join(
+            self.directory_path, "vocabulary_" + str(vocab_size) + ".txt")
+        self.truncated_vocabulary = Counter()
+        with open(self.vocab_file_path, "r", encoding="utf-8") as vocab_file:
+            for line in vocab_file:
+                if line.count(", ") != 1:
+                    raise ValueError("Unexpected vocabulary file formatting!")
+                token, count = line.rstrip().split(", ")
+                self.vocabulary[token] = int(count)
+        self._assign_tag_token()
+
+    def _assign_tag_token(self):
+        self.tag_token = None
+        token_id = 0
+        while self.tag_token is None:
+            if chr(token_id) not in self.vocabulary:
+                self.tag_token = chr(token_id)
 
     def partition_datasets(self):
         for corpus in self.corpora:
@@ -313,11 +376,16 @@ class DatasetCollection:
     def test_generator(self):
         raise NotImplementedError
 
-    def encode_line(self, line, tags=None):
-        if not tags:
-            self.encoder.encode(line)
-        else:
-            pass
+    def encode_line(self, line, document, first_line=False):
+        tag_tokens = []
+        if first_line:
+            for tag in tags:
+                tag_tokens.extend([self.tag_token, tag, self.tag_token])
+        tokens = document.tokenize(line)
+        # Replace OOV tokens
+        tokens = [token if token in self.truncated_vocabulary 
+                  else self.unknown_token for token in tokens]  
+        return document.encode(tag_tokens + tokens, self.encoder)
 
     def _generator(self, dataset_type):
         for corpus in self.corpora:
@@ -329,19 +397,25 @@ class DatasetCollection:
                 if document.file_path.endswith(".tar"):
                     with CustomTarFile(file_path, "r") as tar:
                         for i, line in enumerate(tar.read_lines(encoding="utf-8")):
-                            if i == 0:
-                                encoded_tokens = self.encode_line(
-                                    line, tags=document.classification)
-                            else:
-                                encoded_tokens = self.encode_line(line)
+                            first_line = True if i == 0 else False
+                            yield self.encode_line(
+                                line, document, first_line=first_line)
                 else:
                     with open(file_path, "r", encoding="utf-8") as file:
                         for i, line in enumerate(file):
-                            if i == 0:
-                                encoded_tokens = self.encode_line(
-                                    line, tags=document.classification)
-                            else:
-                                encoded_tokens = self.encode_line(line)
+                            first_line = True if i == 0 else False
+                            yield self.encode_line(
+                                line, document, first_line=first_line)
+
+
+def training_generator():
+    """Training data generator to be called."""
+    pass
+
+
+def validation_generator():
+    """Validation data generator to be called."""
+    pass
 
 
 def get_classification(directory_path):
