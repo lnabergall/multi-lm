@@ -132,6 +132,26 @@ def get_classification(directory_path):
             and directory not in dataset_directories]
 
 
+class MultiLmProblem(Problem):
+
+    def generate_data(self, data_dir, tmp_dir):
+        data_paths = [os.path.join(BASE_DIR, "t2t_data")]
+        generator_utils.generate_dataset_and_shuffle(
+            self.dataset_collection.training_generator(), data_paths, 
+            self.dataset_collection.validation_generator(), data_paths)
+
+    def dataset_filename(self):
+        return BASE_DIR
+
+    def hparams(self, defaults, model_hparams):
+        defaults.input_modality = {"inputs": (registry.Modalities.SYMBOL,
+                                              self.vocab_size)}
+        defaults.target_modality = (registry.Modalities.SYMBOL, self.vocab_size)
+
+    def feature_encoders(self, data_dir):
+        return {"inputs": self.text_encoder, "targets": self.text_encoder}
+
+
 def get_large_dataset():
     """All corpora and a vocabulary size of 2000000."""
     vocab_size = 2000000
@@ -166,6 +186,17 @@ def get_natural_language_dataset():
     return directory_path, corpora_info, vocab_size
 
 
+@registry.register_problem("multi_lm_natural_lang")
+class MultiLmNaturalLang(MultiLmProblem):
+
+    def __init__(self, *args, *kwargs):
+        super(MultiLmProblem, self).__init__(*args, **kwargs)
+        self.dataset_collection = DatasetCollection(
+            get_natural_language_dataset()*)
+        self.text_encoder = self.dataset_collection.text_encoder
+        self.vocab_size = self.text_encoder.vocab_size
+
+
 def get_programming_language_dataset():
     """All programming language corpora and a vocabulary size of 1000000."""
     pavocab_size = 1000000
@@ -173,6 +204,17 @@ def get_programming_language_dataset():
     corpora_info = get_corpora(language_types=[PROGRAMMING_LANGUAGE,])
 
     return directory_path, corpora_info, vocab_size
+
+
+@registry.register_problem("multi_lm_programming_lang")
+class MultiLmProgrammingLang(MultiLmProblem):
+
+    def __init__(self, *args, *kwargs):
+        super(MultiLmProblem, self).__init__(*args, **kwargs)
+        self.dataset_collection = DatasetCollection(
+            get_programming_language_dataset()*)
+        self.text_encoder = self.dataset_collection.text_encoder
+        self.vocab_size = self.text_encoder.vocab_size
 
 
 def get_test_natural_language_dataset():
@@ -186,6 +228,17 @@ def get_test_natural_language_dataset():
     return directory_path, corpora_info, vocab_size
 
 
+@registry.register_problem("multi_lm_natural_lang_test")
+class MultiLmNaturalLangTest(MultiLmProblem):
+
+    def __init__(self, *args, *kwargs):
+        super(MultiLmProblem, self).__init__(*args, **kwargs)
+        self.dataset_collection = DatasetCollection(
+            get_test_natural_language_dataset()*)
+        self.text_encoder = self.dataset_collection.text_encoder
+        self.vocab_size = self.text_encoder.vocab_size
+
+
 def get_gutenberg_dataset():
     """The Gutenberg corpus and a vocabulary size of 250000"""
     vocab_size = 250000
@@ -196,23 +249,13 @@ def get_gutenberg_dataset():
 
 
 @registry.register_problem("multi_lm_gutenberg")
-class MultiLmGutenberg(Problem):
+class MultiLmGutenberg(MultiLmProblem):
 
-    def generate_data(self, data_dir, tmp_dir):
-        training_generator = training_generator(get_gutenberg_dataset)
-        validation_generator = validation_generator(get_gutenberg_dataset)
-        data_paths = [os.path.join(BASE_DIR, "t2t_data")]
-        generator_utils.generate_dataset_and_shuffle(
-            training_generator, data_paths, validation_generator, data_paths)
-
-    def dataset_filename(self):
-        return BASE_DIR
-
-    def hparams(self, defaults, model_hparams):
-        pass
-
-    def feature_encoders(self, data_dir):
-        pass
+    def __init__(self, *args, *kwargs):
+        super(MultiLmProblem, self).__init__(*args, **kwargs)
+        self.dataset_collection = DatasetCollection(get_gutenberg_dataset()*)
+        self.text_encoder = self.dataset_collection.text_encoder
+        self.vocab_size = self.text_encoder.vocab_size
 
 
 def get_english_wiki_dataset():
@@ -222,6 +265,16 @@ def get_english_wiki_dataset():
     corpora_info = get_corpora(corpora=[ENGLISH_WIKI[1],])
 
     return directory_path, corpora_info, vocab_size
+
+
+@registry.register_problem("multi_lm_enwiki")
+class MultiLmEnWiki(MultiLmProblem):
+
+    def __init__(self, *args, *kwargs):
+        super(MultiLmProblem, self).__init__(*args, **kwargs)
+        self.dataset_collection = DatasetCollection(get_english_wiki_dataset()*)
+        self.text_encoder = self.dataset_collection.text_encoder
+        self.vocab_size = self.text_encoder.vocab_size
 
 
 class CustomTokenTextEncoder(TokenTextEncoder):
@@ -443,14 +496,18 @@ class DatasetCollection:
         else:
             self._load_vocabulary()
             self.text_encoder = CustomTokenTextEncoder(
-                self.vocab_file_path, extra_tokens=[self.tag_token,])
+                self.vocab_file_path, 
+                extra_tokens=[self.tag_token, self.unknown_token])
 
     def _build_vocabulary(self, vocab_size=None):
         self.vocabulary = Counter()
         for corpus in self.corpora:
             self.vocabulary.update(corpus.vocabulary)
-        self.truncated_vocabulary = {token: count for token, count 
-                                     in self.vocabulary.most_common(vocab_size)}
+        if vocab_size:
+            vocab_size -= 2  # accounts for tag + unknown tokens
+            self.truncated_vocabulary = {
+                token: count for token, count 
+                in self.vocabulary.most_common(vocab_size)}
         self._assign_tag_token()
 
     def _save_vocabulary(self):
@@ -472,7 +529,7 @@ class DatasetCollection:
                 if line.count(", ") != 1:
                     raise ValueError("Unexpected vocabulary file formatting!")
                 token, count = line.rstrip().split(", ")
-                self.vocabulary[token] = int(count)
+                self.truncated_vocabulary[token] = int(count)
         self._assign_tag_token()
 
     def _assign_tag_token(self):
@@ -534,18 +591,6 @@ class DatasetCollection:
                                 line, document, first_line=first_line)
                             yield {"inputs": encoded_tokens[:-1], 
                                    "targets": encoded_tokens[1:]}
-
-
-def training_generator(dataset_info_function):
-    """Training data generator to be called."""
-    dataset_collection = DatasetCollection(dataset_info_function()*)
-    return dataset_collection.training_generator()
-
-
-def validation_generator(dataset_info_function):
-    """Validation data generator to be called."""
-    dataset_collection = DatasetCollection(dataset_info_function()*)
-    return dataset_collection.validation_generator()
 
 
 def tokenize(text, language, file_name):
