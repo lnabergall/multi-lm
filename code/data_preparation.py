@@ -5,6 +5,7 @@ import re
 import tarfile
 import io
 from time import time
+from itertools import islice
 
 import textacy
 import cchardet
@@ -16,12 +17,12 @@ if not os.path.exists(BASE_DIR):
     raise NotImplementedError("Can't work from current directory!")
 
 # To mitigate file path character limit issue
-BASE_DIR = ("C:\\Users\\lnabe\\Dropbox\\Artificial Intelligence and Robotics\\"
+BASE_DIR = ("C:\\Users\\Lukas\\Dropbox\\Artificial Intelligence and Robotics\\"
             "learning-language\\data\\language_modeling")
 
-NATURAL_LANGUAGE = "natural_language"
-PROGRAMMING_LANGUAGE = "programming_language"
-MARKUP_LANGUAGE = "markup_language"
+NATURAL_LANGUAGE = "natural language"
+PROGRAMMING_LANGUAGE = "programming language"
+MARKUP_LANGUAGE = "markup language"
 
 C = "c"
 PYTHON = "python"
@@ -39,28 +40,36 @@ YAML = "yaml"
 MARKDOWN = "markdown"
 
 # English datasets
-AMAZON_REVIEWS = "amazon_reviews"
-BLOG_CORPUS = "blog_authorship_corpus"
-BROWN_CORPUS = "brown_corpus"
-ENGLISH_WIKI = "enwiki-20140707-corpus.xml"
-GUTENBERG = "gutenberg"
+AMAZON_REVIEWS = ("amazon_reviews", "amazon review corpus", "amazon review")
+BLOG_CORPUS = ("blog_authorship_corpus", "blog authorship corpus", "blog")
+BROWN_CORPUS = ("brown_corpus", "brown corpus", None)
+ENGLISH_WIKI = ("enwiki-20140707-corpus.xml", 
+                "english wikipedia corpus", "wikipedia")
+GUTENBERG = ("gutenberg", "gutenberg dataset", "book")
 
 # French datasets
-CHAMBERS_ROSTAND_CORPUS = "chambers_rostand_journalistic_corpus"
-FRENCH_WIKI = "frwiki-20140804-corpus.xml"
-ORAL_NARRATIVE_CORPUS = "oral_narrative_corpus"
-ABU_CORPUS = "abu_corpus"
+CHAMBERS_ROSTAND_CORPUS = ("chambers_rostand_journalistic_corpus", 
+                           "chambers-rostand journalistic corpus", "news")
+FRENCH_WIKI = ("frwiki-20140804-corpus.xml", 
+               "french wikipedia corpus", "wikipedia")
+ORAL_NARRATIVE_CORPUS = ("oral_narrative_corpus", "french oral narrative corpus", 
+                         "speech", "narrative")
+ABU_CORPUS = ("abu_corpus", "abu corpus", None)
 
 # German datasets
-GERMAN_BIBLE = "german_bible"
-GERMAN_WIKI = "dewiki-20140725-corpus.xml"
-GERMANC = "GerManC"
-PAROLE_CORPUS = "parole_corpus"
+GERMAN_BIBLE = ("german_bible", "german bible", "bible")
+GERMAN_WIKI = ("dewiki-20140725-corpus.xml", 
+               "german wikipedia corpus", "wikipedia")
+GERMANC = ("GerManC", "germanc corpus", None)
+PAROLE_CORPUS = ("parole_corpus", "german parole corpus", None)
 
 # Chinese datasets
-LANCASTER_CORPUS = "lancaster_mandarin_corpus"
-CHINESE_WIKI = "zhwiki-20140804-corpus.xml"
-LEIDEN_WEIBO_CORPUS = "leiden_weibo_corpus-messages"
+LANCASTER_CORPUS = ("lancaster_mandarin_corpus", 
+                    "lancaster mandarin corpus", None)
+CHINESE_WIKI = ("zhwiki-20140804-corpus.xml", 
+                "chinese wikipedia corpus", "wikipedia")
+LEIDEN_WEIBO_CORPUS = ("leiden_weibo_corpus-messages", 
+                       "leiden weibo corpus", "microblog")
 
 
 class CustomTarFile(tarfile.TarFile):
@@ -123,19 +132,36 @@ def get_files_from_directory(root_path, extension=None):
     return files
 
 
-def open_file(file_path, encoding=None):
+def get_text_chunks(text_file):
+    while True:
+        text_chunk = text_file.read(1000000000)
+        if not text_chunk:
+            break
+        yield text_chunk
+
+
+def open_file(file_path, encoding=None, large=False):
     if not encoding:
         encoding = get_encoding(file_path)
     try:
         with open(file_path, "r", encoding=encoding) as text_file:
-            text = text_file.read()
+            if large:
+                return get_text_chunks(text_file)
+            else:
+                text = text_file.read()
     except (UnicodeDecodeError, LookupError):
         try:
             with open(file_path, "r") as text_file:
-                text = text_file.read()
+                if large:
+                    return get_text_chunks(text_file)
+                else:
+                    text = text_file.read()
         except UnicodeDecodeError:
             with open(file_path, "r", encoding="latin-1") as text_file:
-                text = text_file.read()
+                if large:
+                    return get_text_chunks(text_file)
+                else:
+                    text = text_file.read()
 
     return text
 
@@ -351,8 +377,8 @@ def extract_wiki_articles(text):
     articles = text.split("</article>")
     article_by_name = {}
     for i, article in enumerate(articles):
-        if i == len(articles) - 1:
-            break  # Last element is likely not an article
+        if i == 0 or i == len(articles) - 1:
+            continue  # First and last elements may not be articles
         if i % 100000 == 0:
             print("Completed processing", i, "articles...")
         # Get name
@@ -519,18 +545,43 @@ def extract_leiden_weibo_messages(csv_text):
     return messages
 
 
-def prepare_corpus_folder(corpus_name, root_path):
+def make_data_path(root_path, corpus=None):
+    directories = root_path.split("\\")
+    base_index = [i for i, directory in enumerate(directories) 
+                  if directory == "language_modeling"][0]
+    if corpus is None:
+        # Assumes programming language data
+        data_path = "\\".join(directory for directory 
+                              in directories[:base_index+5])
+        data_path = os.path.join(data_path, "processed")
+    else:
+        # Assumes natural language data
+        data_path = "\\".join(directory for directory 
+                              in directories[:base_index+4])
+        data_path = os.path.join(data_path, "processed")
+        for domain in corpus[2:]:
+            if domain is not None:
+                data_path = os.path.join(data_path, domain)
+        if corpus == AMAZON_REVIEWS:
+            data_path = os.path.join(data_path, directories[base_index+4])
+        elif corpus == PAROLE_CORPUS:
+            data_path = os.path.join(data_path, directories[base_index+6])
+
+    return data_path
+
+
+def prepare_corpus_folder(corpus, root_path):
     root_path = "\\\\?\\" + root_path  # Mitigate character limit
-    print("\nPreparing", corpus_name + "...")
+    print("\nPreparing", corpus[1] + "...")
     # Get file names
-    if corpus_name in [GUTENBERG, CHAMBERS_ROSTAND_CORPUS, ABU_CORPUS, 
+    if corpus in [GUTENBERG, CHAMBERS_ROSTAND_CORPUS, ABU_CORPUS, 
                        GERMAN_BIBLE, GERMANC, LEIDEN_WEIBO_CORPUS]:
         file_names = get_files_from_directory(root_path, ".txt")
-    elif corpus_name == AMAZON_REVIEWS:
+    elif corpus == AMAZON_REVIEWS:
         file_names = get_files_from_directory(root_path, ".json")
-    elif corpus_name in [BLOG_CORPUS, LANCASTER_CORPUS]:
+    elif corpus in [BLOG_CORPUS, LANCASTER_CORPUS]:
         file_names = get_files_from_directory(root_path, ".xml")
-    elif corpus_name == BROWN_CORPUS:
+    elif corpus == BROWN_CORPUS:
         with open(os.path.join(root_path, "cats.txt"), "r") as categories_file:
             categories_text = categories_file.read()
         categories = invert_mapping(
@@ -538,100 +589,115 @@ def prepare_corpus_folder(corpus_name, root_path):
         for key, value in categories.items():
             categories[key] = value[0]  # Remove lists
         file_names = get_files_from_directory(root_path)
-    elif corpus_name in [ENGLISH_WIKI, FRENCH_WIKI, GERMAN_WIKI, CHINESE_WIKI]:
+    elif corpus in [ENGLISH_WIKI, FRENCH_WIKI, GERMAN_WIKI, CHINESE_WIKI]:
         file_names = get_files_from_directory(root_path)
         file_name = [file_name for file_name in file_names 
                      if "corpus-processed.txt" in file_name][0]
-    elif corpus_name == ORAL_NARRATIVE_CORPUS:
+    elif corpus == ORAL_NARRATIVE_CORPUS:
         file_names = get_files_from_directory(root_path, "-stripped.html")
-    elif corpus_name == PAROLE_CORPUS:
+    elif corpus == PAROLE_CORPUS:
         file_names = get_files_from_directory(root_path, ".sgm")
 
     # Open, process, and store dataset
-    if corpus_name in [ENGLISH_WIKI, FRENCH_WIKI, GERMAN_WIKI, CHINESE_WIKI]:
+    if corpus in [ENGLISH_WIKI, FRENCH_WIKI, GERMAN_WIKI, CHINESE_WIKI]:
         processed_file_name = file_name[:-4] + "_further_processed.tar"
-        encoding = get_encoding(os.path.join(root_path, file_name))
-        wiki_text = open_file(os.path.join(root_path, file_name))
-        wiki_text = UnicodeDammit(wiki_text).unicode_markup
-        articles_by_name = extract_wiki_articles(wiki_text)
-        with CustomTarFile(
-                os.path.join(root_path, processed_file_name), "w") as tar_file:
-            for name, article in articles_by_name.items():
-                article_file_name = name + ".txt"
-                tar_file.add_text_file(article, article_file_name)
+        file_path = os.path.join(root_path, file_name)
+        encoding = get_encoding(file_path)
+        text_file = open(file_path, "r", encoding=encoding)
+        text_generator = get_text_chunks(text_file)
+        for i, wiki_text_chunk in enumerate(text_generator):
+            wiki_text_chunk = UnicodeDammit(wiki_text_chunk).unicode_markup
+            articles_by_name = extract_wiki_articles(wiki_text_chunk)
+            processed_file_root = make_data_path(root_path, corpus)
+            try:
+                os.makedirs(processed_file_root)
+            except FileExistsError:
+                pass
+            if i == 0:
+                mode = "w"
+            else:
+                mode = "a"
+            with CustomTarFile(os.path.join(
+                    processed_file_root, processed_file_name), mode) as tar_file:
+                for name, article in articles_by_name.items():
+                    article_file_name = name + ".txt"
+                    tar_file.add_text_file(article, article_file_name)
+        text_file.close()
     else:
         for file_name in file_names:
             if ".".join(file_name.split(".")[:-1]).endswith("_processed"):
                 continue
             text = open_file(os.path.join(root_path, file_name))
             text = UnicodeDammit(text).unicode_markup
-            processed_file_root = None
-            if corpus_name == AMAZON_REVIEWS:
+            processed_file_root = make_data_path(root_path, corpus)
+            if corpus == AMAZON_REVIEWS:
                 reviews_by_user = extract_amazon_reviews(text)
                 processed_file_name = file_name[:-5] + "_processed.tar"
-            elif corpus_name == BLOG_CORPUS:
+            elif corpus == BLOG_CORPUS:
                 cleaned_texts = extract_blogs(text)
                 processed_file_name = (get_blog_author_id(file_name)
                                        + "_blogs_processed.txt")
-            elif corpus_name == BROWN_CORPUS:
+            elif corpus == BROWN_CORPUS:
                 if not re.fullmatch(r"[a-zA-Z]{2}[0-9]{2}", file_name):
                     continue
                 else:
                     cleaned_text = clean_brown_corpus_text(text)
                     processed_file_name = file_name + "_processed.txt"
                     processed_file_root = os.path.join(
-                        root_path, categories[file_name])
-            elif corpus_name == GUTENBERG:
+                        processed_file_root, categories[file_name])
+            elif corpus == GUTENBERG:
                 cleaned_text = clean_gutenberg_text(text)
                 author, title = get_author_title_gutenberg(file_name)
                 processed_file_name = title[:-4] + "_processed.txt"
-                processed_file_root = os.path.join(root_path, author.lower())
-            elif corpus_name == CHAMBERS_ROSTAND_CORPUS:
+                processed_file_root = os.path.join(
+                    processed_file_root, author.lower())
+            elif corpus == CHAMBERS_ROSTAND_CORPUS:
                 cleaned_text = clean_chambers_rostand_text(text)
                 category = get_category_chambers_rostand(file_name)
                 processed_file_name = file_name[:-4] + "_processed.txt"
-                processed_file_root = os.path.join(root_path, category)
-            elif corpus_name == ORAL_NARRATIVE_CORPUS:
+                processed_file_root = os.path.join(
+                    processed_file_root, category)
+            elif corpus == ORAL_NARRATIVE_CORPUS:
                 cleaned_text = extract_oral_narrative(text)
                 storyteller = get_storyteller_oral_narrative(file_name)
                 processed_file_name = file_name[:-5] + "_processed.txt"
-                processed_file_root = os.path.join(root_path, storyteller)
-            elif corpus_name == ABU_CORPUS:
+                processed_file_root = os.path.join(
+                    processed_file_root, storyteller)
+            elif corpus == ABU_CORPUS:
                 cleaned_text = clean_abu_corpus_text(text)
                 author, genre = get_author_genre_abu_text(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
                 processed_file_root = os.path.join(
-                    root_path, os.path.join(genre, author))
-            elif corpus_name == GERMAN_BIBLE:
+                    processed_file_root, os.path.join(genre, author))
+            elif corpus == GERMAN_BIBLE:
                 cleaned_text = clean_german_bible_text(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
-            elif corpus_name == GERMANC:
+            elif corpus == GERMANC:
                 cleaned_text = clean_germanc_text(text)
                 genre = get_genre_name_germanc(file_name)
                 processed_file_name = file_name[:-4] + "_processed.txt"
-                processed_file_root = os.path.join(root_path, genre)
-            elif corpus_name == PAROLE_CORPUS:
+                processed_file_root = os.path.join(
+                    processed_file_root, genre)
+            elif corpus == PAROLE_CORPUS:
                 cleaned_texts = extract_parole_corpus_documents(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
-            elif corpus_name == LANCASTER_CORPUS:
+            elif corpus == LANCASTER_CORPUS:
                 cleaned_texts, domain = extract_lancaster_documents(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
-                processed_file_root = os.path.join(root_path, domain)
-            elif corpus_name == LEIDEN_WEIBO_CORPUS:
+                processed_file_root = os.path.join(
+                    processed_file_root, domain)
+            elif corpus == LEIDEN_WEIBO_CORPUS:
                 cleaned_texts = extract_leiden_weibo_messages(text)
                 processed_file_name = file_name[:-4] + "_processed.txt"
-            if processed_file_root is None:
-                processed_file_path = os.path.join(root_path, processed_file_name)
-            else:
-                try:
-                    os.makedirs(processed_file_root)
-                except FileExistsError:
-                    pass
-                processed_file_path = os.path.join(processed_file_root, 
-                                                   processed_file_name)
-            if corpus_name == AMAZON_REVIEWS:
+            try:
+                os.makedirs(processed_file_root)
+            except FileExistsError:
+                pass
+            processed_file_path = os.path.join(processed_file_root, 
+                                               processed_file_name)
+            if corpus == AMAZON_REVIEWS:
                 with CustomTarFile(os.path.join(
-                        root_path, processed_file_name), "w") as tar_file:
+                        processed_file_root, processed_file_name), "w") as tar_file:
                     for user in reviews_by_user:
                         review_string = "\n\n".join(reviews_by_user[user])
                         user_file_name = str(user) + "_reviews_processed.txt"
@@ -640,9 +706,10 @@ def prepare_corpus_folder(corpus_name, root_path):
                 try:
                     with open(processed_file_path, 
                               "w", encoding="utf-8") as processed_file:
-                        if corpus_name in [BLOG_CORPUS, PAROLE_CORPUS, 
-                                           LANCASTER_CORPUS, LEIDEN_WEIBO_CORPUS]:
-                            processed_file.write("\n\n".join(cleaned_texts))
+                        if corpus in [BLOG_CORPUS, PAROLE_CORPUS, 
+                                      LANCASTER_CORPUS, LEIDEN_WEIBO_CORPUS]:
+                            processed_file.write(
+                                "\n\n<document_separator>\n\n".join(cleaned_texts))
                         else:
                             processed_file.write(cleaned_text)
                 except FileNotFoundError as e:
@@ -656,8 +723,14 @@ def prepare_source_code(file_path):
     language = detect_language(file_path, source_code=True)
     cleaned_code = remove_multiline_comments(source_code, language)
     cleaned_code = convert_spaces_to_tabs(cleaned_code)
-    processed_file_path = (".".join(file_path.split(".")[:-1]) 
+    processed_file_root = make_data_path("\\".join(file_path.split("\\")[:-1]))
+    try:
+        os.makedirs(processed_file_root)
+    except FileExistsError:
+        pass
+    processed_file_name = (".".join(file_path.split(".")[:-1]).split("\\")[-1] 
                            + "_processed." + file_path.split(".")[-1])
+    processed_file_path = os.path.join(processed_file_root, processed_file_name)
     with open(processed_file_path, "w", encoding="utf-8") as processed_source_file:
         processed_source_file.write(cleaned_code)
 
@@ -672,14 +745,12 @@ def prepare_datasets(root_path):
                     continue
                 file_path = os.path.join(directory_path, file_name)
                 for programming_language in [C, PYTHON, FORTRAN, LISP]:
-                    if (programming_language in directory_path 
+                    if (programming_language in directory_path.split("\\") 
                             and detect_language(file_path, source_code=True) 
                                     == programming_language):
                         prepare_source_code(file_path)
         elif NATURAL_LANGUAGE in directory_path:
-            continue  # Temporarily skip
             if ENGLISH in directory_path:
-                continue  # Temporarily skip
                 for dataset in [AMAZON_REVIEWS, BLOG_CORPUS, BROWN_CORPUS,
                                 ENGLISH_WIKI, GUTENBERG]:
                     if dataset == ENGLISH_WIKI:
@@ -688,15 +759,11 @@ def prepare_datasets(root_path):
                         indicator_index = -3
                     else:
                         indicator_index = -2
-                    if directory_path.split("\\")[indicator_index] == dataset:
-                        if dataset == AMAZON_REVIEWS and "Books" in directory_path:
-                            continue  # Temporarily skip this
+                    if directory_path.split("\\")[indicator_index] == dataset[0]:
                         prepare_corpus_folder(dataset, directory_path)
             elif FRENCH in directory_path:
                 for dataset in [CHAMBERS_ROSTAND_CORPUS, FRENCH_WIKI, 
                                 ORAL_NARRATIVE_CORPUS, ABU_CORPUS]:
-                    if dataset != ORAL_NARRATIVE_CORPUS:
-                        continue  # Temporarily skip
                     if dataset == CHAMBERS_ROSTAND_CORPUS:
                         indicator_index = -5
                         if "Plain text" not in directory_path:
@@ -707,7 +774,7 @@ def prepare_datasets(root_path):
                             continue
                     else:
                         indicator_index = -1
-                    if directory_path.split("\\")[indicator_index] == dataset:
+                    if directory_path.split("\\")[indicator_index] == dataset[0]:
                         prepare_corpus_folder(dataset, directory_path)
             elif GERMAN in directory_path:
                 for dataset in [GERMAN_BIBLE, GERMANC, GERMAN_WIKI, PAROLE_CORPUS]:
@@ -718,14 +785,12 @@ def prepare_datasets(root_path):
                         if "RAW" not in directory_path:
                             continue
                     elif dataset == GERMAN_WIKI:
-                        continue  # Temporarily skip
                         indicator_index = -1
                     elif dataset == PAROLE_CORPUS:
                         indicator_index = -5
-                    if directory_path.split("\\")[indicator_index] == dataset:
+                    if directory_path.split("\\")[indicator_index] == dataset[0]:
                         prepare_corpus_folder(dataset, directory_path)
             elif CHINESE in directory_path:
-                continue  # Temporarily skip
                 for dataset in [LANCASTER_CORPUS, CHINESE_WIKI, LEIDEN_WEIBO_CORPUS]:
                     if dataset == LANCASTER_CORPUS:
                         indicator_index = -5
@@ -733,7 +798,7 @@ def prepare_datasets(root_path):
                             continue
                     else:
                         indicator_index = -1
-                    if directory_path.split("\\")[indicator_index] == dataset:
+                    if directory_path.split("\\")[indicator_index] == dataset[0]:
                         prepare_corpus_folder(dataset, directory_path)
 
 
