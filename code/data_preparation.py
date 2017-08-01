@@ -17,7 +17,8 @@ if not os.path.exists(BASE_DIR):
     raise NotImplementedError("Can't work from current directory!")
 
 # To mitigate file path character limit issue
-BASE_DIR = ("C:\\Users\\Lukas\\Dropbox\\Artificial Intelligence and Robotics\\"
+BASE_DIR = ("\\\\?\\C:\\Users\\Lukas\\Dropbox\\"
+            "Artificial Intelligence and Robotics\\"
             "learning-language\\data\\language_modeling")
 
 NATURAL_LANGUAGE = "natural language"
@@ -571,7 +572,6 @@ def make_data_path(root_path, corpus=None):
 
 
 def prepare_corpus_folder(corpus, root_path):
-    root_path = "\\\\?\\" + root_path  # Mitigate character limit
     print("\nPreparing", corpus[1] + "...")
     # Get file names
     if corpus in [GUTENBERG, CHAMBERS_ROSTAND_CORPUS, ABU_CORPUS, 
