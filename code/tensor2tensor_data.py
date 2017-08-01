@@ -14,7 +14,7 @@ from collections import Counter, namedtuple
 from itertools import chain
 from random import shuffle
 
-import textacy
+import spacy
 import tensorflow as tf
 from pygments import lex
 from pygments.lexers.python import PythonLexer
@@ -32,8 +32,13 @@ from data_preparation import (get_files_from_directory, open_file,
                               get_encoding, detect_language, BASE_DIR, 
                               CustomTarFile, open_tarfile)
 
+ENGLISH_PROCESSOR = spacy.load("en")
+FRENCH_PROCESSOR = spacy.load("fr")
+GERMAN_PROCESSOR = spacy.load("de")
+CHINESE_PROCESSOR = spacy.load("zh")
 
-BASE_DIR = ("C:\\Users\\lnabe\\Dropbox\\Artificial Intelligence and Robotics\\"
+BASE_DIR = ("\\\\?\\C:\\Users\\lnabe\\Dropbox\\"
+            "Artificial Intelligence and Robotics\\"
             "learning-language\\data\\language_modeling")
 
 NATURAL_LANGUAGE = "natural language"
@@ -104,26 +109,30 @@ def get_all_corpora_info():
     return corpora_info
 
 
-def get_corpora(language_types=None, languages=None, corpora=None):
+def get_corpora(directory_path, language_types=None, 
+                languages=None, corpora=None):
     corpora_info = get_all_corpora_info()
-    corpora = []
+    corpora_list = []
     for dir_path, dir_names, file_names in os.walk(directory_path):
         if "processed" in dir_names:
             classification = get_classification(dir_path)
             corpus_directory = dir_path.split("\\")[-1]
-            corpus_info = [corpus_info for corpus_info in corpora_info 
-                           if corpus_info[0] == corpus_directory][0]
-            name = corpus_info[1]
-            if corpus_info[2] is not None:
-                classification += corpus_info[2:]
+            if NATURAL_LANGUAGE in classification:
+                corpus_info = [corpus_info for corpus_info in corpora_info 
+                               if corpus_info[0] == corpus_directory][0]
+                name = corpus_info[1]
+                if corpus_info[2] is not None:
+                    classification += corpus_info[2:]
+            else:
+                name = corpus_directory
             if ((language_types is not None 
                     and classification[0] in language_types)
                     or (languages is not None 
                         and classification[1] in languages)
                     or (corpora is not None and name in corpora)):
-                corpora.append(corpus_directory, name, classification)
+                corpora_list.append((corpus_directory, name, classification))
 
-    return corpora
+    return corpora_list
 
 
 def get_classification(directory_path):
@@ -162,7 +171,7 @@ def get_large_dataset():
     vocab_size = 2000000
     directory_path = BASE_DIR
     corpora_info = get_corpora(
-        language_types=[NATURAL_LANGUAGE, PROGRAMMING_LANGUAGE])
+        directory_path, language_types=[NATURAL_LANGUAGE, PROGRAMMING_LANGUAGE])
 
     return directory_path, corpora_info, vocab_size
 
@@ -175,7 +184,7 @@ def get_small_dataset():
     vocab_size = 1500000
     directory_path = BASE_DIR
     corpora_info = get_corpora(
-        language_types=[PROGRAMMING_LANGUAGE,],
+        directory_path, language_types=[PROGRAMMING_LANGUAGE,],
         corpora=[ENGLISH_WIKI[1], CHAMBERS_ROSTAND_CORPUS[1], 
                  GERMAN_BIBLE[1], LEIDEN_WEIBO_CORPUS[1]])
 
@@ -186,7 +195,8 @@ def get_natural_language_dataset():
     """All natural language corpora and a vocabulary size of 1000000."""
     pavocab_size = 1000000
     directory_path = BASE_DIR
-    corpora_info = get_corpora(language_types=[NATURAL_LANGUAGE,])
+    corpora_info = get_corpora(
+        directory_path, language_types=[NATURAL_LANGUAGE,])
 
     return directory_path, corpora_info, vocab_size
 
@@ -194,10 +204,10 @@ def get_natural_language_dataset():
 @registry.register_problem("multi_lm_natural_lang")
 class MultiLmNaturalLang(MultiLmProblem):
 
-    def __init__(self, *args, *kwargs):
+    def __init__(self, *args, **kwargs):
         super(MultiLmProblem, self).__init__(*args, **kwargs)
         self.dataset_collection = DatasetCollection(
-            "natural language dataset", get_natural_language_dataset()*)
+            "natural language dataset", *get_natural_language_dataset())
         self.text_encoder = self.dataset_collection.text_encoder
         self.vocab_size = self.text_encoder.vocab_size
 
@@ -206,7 +216,8 @@ def get_programming_language_dataset():
     """All programming language corpora and a vocabulary size of 1000000."""
     pavocab_size = 1000000
     directory_path = BASE_DIR
-    corpora_info = get_corpora(language_types=[PROGRAMMING_LANGUAGE,])
+    corpora_info = get_corpora(
+        directory_path, language_types=[PROGRAMMING_LANGUAGE,])
 
     return directory_path, corpora_info, vocab_size
 
@@ -214,10 +225,10 @@ def get_programming_language_dataset():
 @registry.register_problem("multi_lm_programming_lang")
 class MultiLmProgrammingLang(MultiLmProblem):
 
-    def __init__(self, *args, *kwargs):
+    def __init__(self, *args, **kwargs):
         super(MultiLmProblem, self).__init__(*args, **kwargs)
         self.dataset_collection = DatasetCollection(
-            "programming language dataset", get_programming_language_dataset()*)
+            "programming language dataset", *get_programming_language_dataset())
         self.text_encoder = self.dataset_collection.text_encoder
         self.vocab_size = self.text_encoder.vocab_size
 
@@ -227,6 +238,7 @@ def get_test_natural_language_dataset():
     vocab_size = 1000000
     directory_path = BASE_DIR
     corpora_info = get_corpora(
+        directory_path, 
         corpora=[ENGLISH_WIKI[1], CHAMBERS_ROSTAND_CORPUS[1], 
                  GERMAN_BIBLE[1], LEIDEN_WEIBO_CORPUS[1]])
 
@@ -236,10 +248,10 @@ def get_test_natural_language_dataset():
 @registry.register_problem("multi_lm_natural_lang_test")
 class MultiLmNaturalLangTest(MultiLmProblem):
 
-    def __init__(self, *args, *kwargs):
+    def __init__(self, *args, **kwargs):
         super(MultiLmProblem, self).__init__(*args, **kwargs)
         self.dataset_collection = DatasetCollection(
-            "natural language test dataset", get_test_natural_language_dataset()*)
+            "natural language test dataset", *get_test_natural_language_dataset())
         self.text_encoder = self.dataset_collection.text_encoder
         self.vocab_size = self.text_encoder.vocab_size
 
@@ -248,7 +260,7 @@ def get_gutenberg_dataset():
     """The Gutenberg corpus and a vocabulary size of 250000"""
     vocab_size = 250000
     directory_path = BASE_DIR
-    corpora_info = get_corpora(corpora=[GUTENBERG[1],])
+    corpora_info = get_corpora(directory_path, corpora=[GUTENBERG[1],])
 
     return directory_path, corpora_info, vocab_size
 
@@ -256,10 +268,11 @@ def get_gutenberg_dataset():
 @registry.register_problem("multi_lm_gutenberg")
 class MultiLmGutenberg(MultiLmProblem):
 
-    def __init__(self, *args, *kwargs):
+    def __init__(self, *args, **kwargs):
         super(MultiLmProblem, self).__init__(*args, **kwargs)
         self.dataset_collection = DatasetCollection(
-            "gutenberg dataset", get_gutenberg_dataset()*)
+            "gutenberg dataset", *get_gutenberg_dataset(), 
+            partition_type="document")
         self.text_encoder = self.dataset_collection.text_encoder
         self.vocab_size = self.text_encoder.vocab_size
 
@@ -268,7 +281,7 @@ def get_english_wiki_dataset():
     """The English Wikipedia corpus and a vocabulary size of 500000"""
     vocab_size = 500000
     directory_path = BASE_DIR
-    corpora_info = get_corpora(corpora=[ENGLISH_WIKI[1],])
+    corpora_info = get_corpora(directory_path, corpora=[ENGLISH_WIKI[1],])
 
     return directory_path, corpora_info, vocab_size
 
@@ -276,10 +289,11 @@ def get_english_wiki_dataset():
 @registry.register_problem("multi_lm_enwiki")
 class MultiLmEnWiki(MultiLmProblem):
 
-    def __init__(self, *args, *kwargs):
+    def __init__(self, *args, **kwargs):
         super(MultiLmProblem, self).__init__(*args, **kwargs)
         self.dataset_collection = DatasetCollection(
-            "english wikipedia dataset", get_english_wiki_dataset()*)
+            "english wikipedia dataset", *get_english_wiki_dataset(), 
+            partition_type="document")
         self.text_encoder = self.dataset_collection.text_encoder
         self.vocab_size = self.text_encoder.vocab_size
 
@@ -290,7 +304,7 @@ class CustomTokenTextEncoder(TokenTextEncoder):
         super(CustomTokenTextEncoder, self).__init__(*args, **kwargs)
         self._extra_tokens = extra_tokens
 
-    def _load_vocab_from_file(self, file_path):
+    def _load_vocab_from_file(self, filename):
         self._token_to_id = {}
         self._id_to_token = {}
 
@@ -324,6 +338,12 @@ class Document:
         self.assignment = assignment
         if text and tokenize:
             self._tokenize()
+
+    def __repr__(self):
+        return ("<Document(file_path={}, file_name={}, "
+                "assignment={}, classification={})>".format(
+                self.file_path, self.file_name, 
+                self.assignment, self.classification))
 
     def _tokenize(self):
         self.tokens = tokenize(self.text, self.language, self.file_name)
@@ -381,7 +401,7 @@ class CategoryTree:
         else:
             return 0
 
-    def all_category_trees(depth=None, height=None):
+    def all_category_trees(self, depth=None, height=None):
         if depth is not None:
             if self.depth == depth:
                 return self
@@ -431,7 +451,8 @@ class CategoryTree:
                 category_tree.add_document(document, level_index=level_index+1)
             self.add_subcategory(category_tree)
 
-    def partition(partition_level, training=0.8, validation=0.1, test=0.1):
+    def partition(self, partition_level, training=0.8, 
+                  validation=0.1, test=0.1):
         # Collect all category trees at the given partition level
         if partition_level < 0:
             height = -partition_level-1
@@ -469,15 +490,12 @@ class Corpus:
             self._load_document_metadata()
             self._extend_category_tree(dataset_collection_category_tree)
 
-    def _add_to_partition(self, directory_path, document):
-        if directory_path.endswith("training"):
-            self.training_documents.append(document)
-        elif directory_path.endswith("validation"):
-            self.validation_documents.append(document)
-        elif directory_path.endswith("test"):
-            self.test_documents.append(document)
+    def __repr__(self):
+        return "<Corpus(name={}, directory_path={}, classification={})>".format(
+            self.name, self.directory_path, self.classification)
 
     def _load_documents(self):
+        print("Loading", self.name, "documents...")
         self.documents = []
         self.training_documents = []
         self.validation_documents = []
@@ -495,13 +513,12 @@ class Corpus:
                             self.documents.append(
                                 Document(file_name, file_path, 
                                          classification, text=text))
-                            self._add_to_partition(dir_path, self.documents[-1])
                     else:
                         text = open_file(file_path, encoding="utf-8")
-                        self.documents.append(
-                            Document(file_name, file_path, 
-                                     classification, text=text))
-                        self._add_to_partition(dir_path, self.documents[-1])
+                        for doc_text in text.split("\n\n<document_separator>\n\n"):
+                            self.documents.append(
+                                Document(file_name, file_path, 
+                                         classification, text=doc_text))
         self.token_count = sum(len(document.tokens) for document in self.documents)
 
     def _extend_category_tree(self, base_category_tree):
@@ -510,6 +527,7 @@ class Corpus:
             self.category_tree.add_document(document)
 
     def _load_document_metadata(self):
+        print("Loading", self.name, "document metadata...")
         self.documents = []
         self.training_documents = []
         self.validation_documents = []
@@ -528,11 +546,9 @@ class Corpus:
                         for file_name in file_names:
                             self.documents.append(
                                 Document(file_name, file_path, classification))
-                            self._add_to_partition(dir_path, self.documents[-1])
                     else:
                         self.documents.append(
                             Document(file_name, file_path, classification))
-                        self._add_to_partition(dir_path, self.documents[-1])
 
     def _build_vocabulary(self):
         self.vocabulary = Counter()
@@ -563,6 +579,13 @@ class Corpus:
             else:
                 raise NotImplementedError("Unexpected partition type!")
             self.category_tree.partition(partition_level)
+
+        self.training_documents = [document for document in self.documents
+                                   if document.assignment == "training"]
+        self.validation_documents = [document for document in self.documents
+                                     if document.assignment == "validation"]
+        self.test_documents = [document for document in self.documents
+                               if document.assignment == "test"]
 
     def partition_by_folders(self, training=0.8, validation=0.1):
         shuffle(self.documents)
@@ -625,15 +648,15 @@ class Corpus:
 
 class DatasetCollection:
     
-    def __init__(name, directory_path, corpora_info, partition_type=None, 
-                 vocab_size=None, load_texts=False):
+    def __init__(self, name, directory_path, corpora_info, vocab_size, 
+                 partition_type=None, load_texts=False):
         self.name = name
         self.directory_path = directory_path
         self.category_tree = CategoryTree("language")
         self.corpora = []
         for corpus_directory, name, classification in corpora_info:
-            corpus_directory_path = os.path.join(
-                self.directory_path, corpus_directory)
+            corpus_directory_path = self._construct_corpus_path(
+                corpus_directory, classification)
             self.corpora.append(
                 Corpus(name, corpus_directory_path, classification, 
                        self.category_tree, load_texts=load_texts))
@@ -643,12 +666,31 @@ class DatasetCollection:
             self.token_count = sum(corpus.token_count for corpus in self.corpora) 
             self._build_vocabulary(vocab_size)
             self._save_vocabulary()
+            self._print_statistics()
         else:
             self._load_vocabulary()
             self._partition(partition_type=partition_type)
             self.text_encoder = CustomTokenTextEncoder(
                 self.vocab_file_path, 
                 extra_tokens=[self.tag_token, self.unknown_token])
+
+    def __repr__(self):
+        return ("<DatasetCollection(name={}, directory_path={}, "
+                "partition_type={})>".format(
+                self.name, self.directory_path, self.partition_type))
+
+    def _print_statistics(self):
+        print("Tokens:", self.token_count)
+        print("Out-of-vocabulary tokens:", self.unknown_token_count)
+        print("Complete vocabulary size:", len(self.vocabulary))
+        print("Truncated vocabulary size:", len(self.truncated_vocabulary))
+
+    def _construct_corpus_path(self, corpus_directory, classification):
+        corpus_directory_path = self.directory_path
+        for category in classification[:2]:
+            corpus_directory_path = os.path.join(
+                corpus_directory_path, category)
+        return os.path.join(corpus_directory_path, corpus_directory)
 
     def _build_vocabulary(self, vocab_size=None):
         self.vocabulary = Counter()
@@ -669,7 +711,10 @@ class DatasetCollection:
         with open(self.vocab_file_path, "w", encoding="utf-8") as vocab_file:
             for token, count in self.truncated_vocabulary.items():
                 print(token + ", " + count, file=vocab_file)
-        self.text_encoder = CustomTokenTextEncoder(self.vocab_file_path)
+        raise NotImplementedError
+        self.text_encoder = CustomTokenTextEncoder(
+            self.vocab_file_path, 
+            extra_tokens=[self.tag_token, self.unknown_token])
 
     def _load_vocabulary(self):
         # Assumes the path of the vocabulary file
@@ -794,25 +839,39 @@ class DatasetCollection:
                                    "targets": encoded_tokens[1:]}
 
 
+def generate_vocabulary(corpora):
+    if corpora == GUTENBERG[1]:
+        self.dataset_collection = DatasetCollection(
+            "gutenberg dataset", *get_gutenberg_dataset(), 
+            partition_type="document", load_texts=True)
+
+
 def tokenize(text, language, file_name):
-    if language == PYTHON[0]:
+    if language == PYTHON:
         tokens = [token_pair[1] for token_pair 
                   in lex(text, PythonLexer(encoding="utf-8"))]
-    elif language == C[0]:
+    elif language == C:
         tokens = [token_pair[1] for token_pair 
                   in lex(text, CLexer(encoding="utf-8"))]
-    elif language == FORTRAN[0]:
+    elif language == FORTRAN:
         if file_name.lower().endswith(".f95") or file_name.lower().endswith(".f03"):
             tokens = [token_pair[1] for token_pair 
                       in lex(text, FortranLexer(encoding="utf-8"))]
         else:
             tokens = [token_pair[1] for token_pair 
                       in lex(text, FortranFixedLexer(encoding="utf-8"))]
-    elif language == LISP[0]:
+    elif language == LISP:
         tokens = [token_pair[1] for token_pair 
                   in lex(text, CommonLispLexer(encoding="utf-8"))]
-    elif language in [ENGLISH[0], FRENCH[0], GERMAN[0], CHINESE[0]]:
-        document = textacy.doc.Doc(text)
+    elif language in [ENGLISH, FRENCH, GERMAN, CHINESE]:
+        if language == ENGLISH:
+            document = ENGLISH_PROCESSOR(text)
+        elif language == FRENCH:
+            document = FRENCH_PROCESSOR(text)
+        elif language == GERMAN:
+            document = GERMAN_PROCESSOR(text)
+        elif language == CHINESE:
+            document = CHINESE_PROCESSOR(text)
         tokens = [str(token) for token in document]
 
     # Break apart whitespace tokens and remove spaces
@@ -852,3 +911,5 @@ def replace_rare_tokens(text_list_tokens, threshold=3):
     return text_list_tokens
 
 
+if __name__ == '__main__':
+    generate_vocabulary(GUTENBERG[1])
