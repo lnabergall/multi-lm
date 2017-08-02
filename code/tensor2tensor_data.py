@@ -10,9 +10,11 @@ import re
 import shutil
 import tarfile
 import tokenize as py_token
+from multiprocessing import Pool
 from collections import Counter, namedtuple
 from itertools import chain
 from random import shuffle
+from time import time
 
 import spacy
 import tensorflow as tf
@@ -271,8 +273,7 @@ class MultiLmGutenberg(MultiLmProblem):
     def __init__(self, *args, **kwargs):
         super(MultiLmProblem, self).__init__(*args, **kwargs)
         self.dataset_collection = DatasetCollection(
-            "gutenberg dataset", *get_gutenberg_dataset(), 
-            partition_type="document")
+            "gutenberg dataset", *get_gutenberg_dataset())
         self.text_encoder = self.dataset_collection.text_encoder
         self.vocab_size = self.text_encoder.vocab_size
 
@@ -292,8 +293,7 @@ class MultiLmEnWiki(MultiLmProblem):
     def __init__(self, *args, **kwargs):
         super(MultiLmProblem, self).__init__(*args, **kwargs)
         self.dataset_collection = DatasetCollection(
-            "english wikipedia dataset", *get_english_wiki_dataset(), 
-            partition_type="document")
+            "english wikipedia dataset", *get_english_wiki_dataset())
         self.text_encoder = self.dataset_collection.text_encoder
         self.vocab_size = self.text_encoder.vocab_size
 
@@ -326,7 +326,11 @@ class CustomTokenTextEncoder(TokenTextEncoder):
                 self._token_to_id[tok] = idx
                 self._id_to_token[idx] = tok
 
-class Document:
+class Document(object):
+
+    __slots__ = ["text", "classification", "language", 
+                 "file_name", "file_path", "assignment", 
+                 "ids", "tokens"]
 
     def __init__(self, file_name, file_path, classification, 
                  text=None, tokenize=True, assignment=None):
@@ -338,6 +342,7 @@ class Document:
         self.assignment = assignment
         if text and tokenize:
             self._tokenize()
+            print("Document", self.file_name, "loaded!")
 
     def __repr__(self):
         return ("<Document(file_path={}, file_name={}, "
@@ -356,6 +361,10 @@ class Document:
 
     def _decode(self, encoder):
         self.tokens = encoder.decode(self.ids)
+
+    def load_text(text):
+        self.text = text
+        self._tokenize()
 
     def tokenize(self, string):
         return tokenize(string, self.language, self.file_name)
@@ -377,7 +386,10 @@ class Document:
                 document.assignment = "test"
 
 
-class CategoryTree:
+class CategoryTree(object):
+
+    __slots__ = ["category", "documents", "depth", 
+                 "subcategory_trees", "subcategories"]
 
     def __init__(self, category, documents=[], depth=None):
         self.category = category
@@ -418,21 +430,28 @@ class CategoryTree:
                      for tree in self.subcategory_trees]))
         else:
             return [self] + list(chain.from_iterable(
-                [tree.all_category_trees() for tree in self.subcategories]))
+                [tree.all_category_trees() for tree in self.subcategory_trees]))
 
     @property
     def all_categories(self):
         return [self.category] + list(chain.from_iterable(
-            [tree.all_categories for tree in self.subcategories]))
+            [tree.all_categories for tree in self.subcategory_trees]))
 
     @property
     def all_documents(self):
         return self.documents + list(chain.from_iterable(
-            [tree.all_documents for tree in self.subcategories]))
+            [tree.all_documents for tree in self.subcategory_trees]))
 
     def add_document(self, document, level_index=0):
         depth = level_index + 1
-        category = document.classification[level_index]
+        try:
+            category = document.classification[level_index]
+        except IndexError:
+            if document.classification[-1] == self.category:
+                self.documents.append(document)
+                return
+            else:
+                raise NotImplementedError("Implementation error!")
         if category == self.category:
             if category == document.classification[-1]:
                 self.documents.append(document)
@@ -550,6 +569,22 @@ class Corpus:
                         self.documents.append(
                             Document(file_name, file_path, classification))
 
+    def _load_text(self, document_batch=None, batches=None):
+        # TODO: add support for tar files and files with document separators
+        if document_batch is not None:
+            document_indices = list(range(len(self.documents)))[
+                (document_batch-1)*len(self.documents)//batches: 
+                document_batch*len(self.documents)//batches]
+            for i in document_indices:
+                if self.documents[i].file_name in self.documents[i].file_path:
+                    text = open_file(self.documents[i].file_path, encoding="utf-8")
+                    self.documents[i].load_text(text)
+                else:
+                    raise NotImplementedError
+        else:
+            with Pool(8) as pool:
+                pool.starmap(self._load_text, [(i, 8) for i in range(1, 9)])
+
     def _build_vocabulary(self):
         self.vocabulary = Counter()
         for document in self.documents:
@@ -559,7 +594,7 @@ class Corpus:
         vocab_file_path = os.path.join(self.directory_path, "vocabulary.txt")
         with open(vocab_file_path, "w", encoding="utf-8") as vocab_file:
             for token, count in self.vocabulary.items():
-                print(token + ", " + count, file=vocab_file)
+                print(token + ",", count, file=vocab_file)
 
     def partition(self, partition_type):
         """
@@ -710,8 +745,7 @@ class DatasetCollection:
         self.vocab_file_path = os.path.join(self.directory_path, vocab_file_name)
         with open(self.vocab_file_path, "w", encoding="utf-8") as vocab_file:
             for token, count in self.truncated_vocabulary.items():
-                print(token + ", " + count, file=vocab_file)
-        raise NotImplementedError
+                print(token + ",", count, file=vocab_file)
         self.text_encoder = CustomTokenTextEncoder(
             self.vocab_file_path, 
             extra_tokens=[self.tag_token, self.unknown_token])
@@ -724,9 +758,9 @@ class DatasetCollection:
         self.truncated_vocabulary = Counter()
         with open(self.vocab_file_path, "r", encoding="utf-8") as vocab_file:
             for line in vocab_file:
-                if line.count(", ") != 1:
-                    raise ValueError("Unexpected vocabulary file formatting!")
-                token, count = line.rstrip().split(", ")
+                token, count = line.strip().split(", ")
+                if token == "":
+                    token = "\n"  # Should be correct token
                 self.truncated_vocabulary[token] = int(count)
         self._assign_tag_token()
 
@@ -746,6 +780,7 @@ class DatasetCollection:
         if partition_type is not None:
             for corpus in self.corpora:
                 corpus.partition(partition_type)
+            self._store_partition()
         else:
             self._load_partition()
 
@@ -768,7 +803,7 @@ class DatasetCollection:
         partition_file_name = self.name.replace(" ", "_") + "_partition.txt"
         partition_file_path = os.path.join(
             self.directory_path, partition_file_name)
-        with open(partition_file_name, "w") as partition_file:
+        with open(partition_file_path, "w") as partition_file:
             partition_file.write(partition_description)
 
     def _load_partition(self):
@@ -841,9 +876,16 @@ class DatasetCollection:
 
 def generate_vocabulary(corpora):
     if corpora == GUTENBERG[1]:
+        print("\nGenerating vocabulary...")
         self.dataset_collection = DatasetCollection(
             "gutenberg dataset", *get_gutenberg_dataset(), 
             partition_type="document", load_texts=True)
+        print("\nVocabulary generated! Partitioning datasets...")
+        del self.dataset_collection
+        self.dataset_collection = DatasetCollection(
+            "gutenberg dataset", *get_gutenberg_dataset(), 
+            partition_type="document")
+        print("\nDatasets partitioned!")
 
 
 def tokenize(text, language, file_name):
@@ -865,14 +907,14 @@ def tokenize(text, language, file_name):
                   in lex(text, CommonLispLexer(encoding="utf-8"))]
     elif language in [ENGLISH, FRENCH, GERMAN, CHINESE]:
         if language == ENGLISH:
-            document = ENGLISH_PROCESSOR(text)
+            document = ENGLISH_PROCESSOR.tokenizer(text)
         elif language == FRENCH:
-            document = FRENCH_PROCESSOR(text)
+            document = FRENCH_PROCESSOR.tokenizer(text)
         elif language == GERMAN:
-            document = GERMAN_PROCESSOR(text)
+            document = GERMAN_PROCESSOR.tokenizer(text)
         elif language == CHINESE:
-            document = CHINESE_PROCESSOR(text)
-        tokens = [str(token) for token in document]
+            document = CHINESE_PROCESSOR.tokenizer(text)
+        tokens = [token.text for token in document]
 
     # Break apart whitespace tokens and remove spaces
     cleaned_tokens = []
@@ -886,7 +928,7 @@ def tokenize(text, language, file_name):
         else:
             cleaned_tokens.append(token)
 
-    return tokens
+    return cleaned_tokens
 
 
 def replace_rare_tokens(text_list_tokens, threshold=3):
@@ -912,4 +954,6 @@ def replace_rare_tokens(text_list_tokens, threshold=3):
 
 
 if __name__ == '__main__':
+    start_time = time()
     generate_vocabulary(GUTENBERG[1])
+    print("\nDuration:", time() - start_time)
