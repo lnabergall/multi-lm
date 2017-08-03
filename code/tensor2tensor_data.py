@@ -39,7 +39,7 @@ FRENCH_PROCESSOR = spacy.load("fr")
 GERMAN_PROCESSOR = spacy.load("de")
 CHINESE_PROCESSOR = spacy.load("zh")
 
-BASE_DIR = ("\\\\?\\C:\\Users\\lnabe\\Dropbox\\"
+BASE_DIR = ("\\\\?\\C:\\Users\\Lukas\\Dropbox\\"
             "Artificial Intelligence and Robotics\\"
             "learning-language\\data\\language_modeling")
 
@@ -260,7 +260,7 @@ class MultiLmNaturalLangTest(MultiLmProblem):
 
 def get_gutenberg_dataset():
     """The Gutenberg corpus and a vocabulary size of 250000"""
-    vocab_size = 250000
+    vocab_size = 100000
     directory_path = BASE_DIR
     corpora_info = get_corpora(directory_path, corpora=[GUTENBERG[1],])
 
@@ -301,8 +301,8 @@ class MultiLmEnWiki(MultiLmProblem):
 class CustomTokenTextEncoder(TokenTextEncoder):
 
     def __init__(self, *args, extra_tokens=[], **kwargs):
-        super(CustomTokenTextEncoder, self).__init__(*args, **kwargs)
         self._extra_tokens = extra_tokens
+        super(CustomTokenTextEncoder, self).__init__(*args, **kwargs)
 
     def _load_vocab_from_file(self, filename):
         self._token_to_id = {}
@@ -315,16 +315,19 @@ class CustomTokenTextEncoder(TokenTextEncoder):
         token_start_idx = self._num_reserved_ids
         with tf.gfile.Open(filename) as file:
             for i, line in enumerate(file):
+                if ", " not in line:
+                    continue
                 idx = token_start_idx + i
-                if line.count(", ") != 1:
-                    raise ValueError("Unexpected vocabulary file formatting!")
-                tok, _ = line.rstrip().split(", ")
+                tok, _ = line.split(", ")
+                if tok == "":
+                    tok = "\n"  # Should be correct token
                 self._token_to_id[tok] = idx
                 self._id_to_token[idx] = tok
             for tok in self._extra_tokens:
                 idx += 1
                 self._token_to_id[tok] = idx
                 self._id_to_token[idx] = tok
+
 
 class Document(object):
 
@@ -403,27 +406,25 @@ class CategoryTree(object):
         self.subcategories.append(subcategory_tree.category)
 
     @property
-    def is_leaf(self):
-        return bool(self.documents)
-
-    @property
     def height(self):
         if self.subcategories:
             return max(tree.height for tree in self.subcategory_trees) + 1
         else:
+            if not self.documents:
+                raise NotImplementedError("Implementation error!")  # Sanity check
             return 0
 
     def all_category_trees(self, depth=None, height=None):
         if depth is not None:
             if self.depth == depth:
-                return self
+                return [self]
             else:
                 return list(chain.from_iterable(
                     [tree.all_category_trees(depth=depth) 
                      for tree in self.subcategory_trees]))
         elif height is not None:
             if self.height == height:
-                return self
+                return [self]
             else:
                 return list(chain.from_iterable(
                     [tree.all_category_trees(height=height) 
@@ -596,6 +597,21 @@ class Corpus:
             for token, count in self.vocabulary.items():
                 print(token + ",", count, file=vocab_file)
 
+    @property
+    def training_documents(self):
+        return [document for document in self.documents 
+                if document.assignment == "training"]
+
+    @property
+    def validation_documents(self):
+        return [document for document in self.documents 
+                if document.assignment == "validation"]
+
+    @property
+    def test_documents(self):
+        return [document for document in self.documents 
+                if document.assignment == "test"]
+
     def partition(self, partition_type):
         """
         Args:
@@ -696,10 +712,11 @@ class DatasetCollection:
                 Corpus(name, corpus_directory_path, classification, 
                        self.category_tree, load_texts=load_texts))
 
+        self.vocab_size = vocab_size
         self.unknown_token = UNKNOWN_TOKEN
         if load_texts:
             self.token_count = sum(corpus.token_count for corpus in self.corpora) 
-            self._build_vocabulary(vocab_size)
+            self._build_vocabulary()
             self._save_vocabulary()
             self._print_statistics()
         else:
@@ -727,21 +744,20 @@ class DatasetCollection:
                 corpus_directory_path, category)
         return os.path.join(corpus_directory_path, corpus_directory)
 
-    def _build_vocabulary(self, vocab_size=None):
+    def _build_vocabulary(self):
         self.vocabulary = Counter()
         for corpus in self.corpora:
             self.vocabulary.update(corpus.vocabulary)
-        if vocab_size:
-            vocab_size -= 2  # accounts for tag + unknown tokens
+        if self.vocab_size:
+            vocab_size = self.vocab_size - 2  # accounts for tag + unknown tokens
             self.truncated_vocabulary = {
                 token: count for token, count 
                 in self.vocabulary.most_common(vocab_size)}
         self._assign_tag_token()
 
     def _save_vocabulary(self):
-        vocab_size = len(self.truncated_vocabulary)
         vocab_file_name = (self.name.replace(" ", "_") + "_vocabulary_" 
-                           + str(vocab_size) + ".txt")
+                           + str(self.vocab_size) + ".txt")
         self.vocab_file_path = os.path.join(self.directory_path, vocab_file_name)
         with open(self.vocab_file_path, "w", encoding="utf-8") as vocab_file:
             for token, count in self.truncated_vocabulary.items():
@@ -753,22 +769,24 @@ class DatasetCollection:
     def _load_vocabulary(self):
         # Assumes the path of the vocabulary file
         vocab_file_name = (self.name.replace(" ", "_") + "_vocabulary_" 
-                           + str(vocab_size) + ".txt")
+                           + str(self.vocab_size) + ".txt")
         self.vocab_file_path = os.path.join(self.directory_path, vocab_file_name)
         self.truncated_vocabulary = Counter()
         with open(self.vocab_file_path, "r", encoding="utf-8") as vocab_file:
             for line in vocab_file:
-                token, count = line.strip().split(", ")
+                if ", " not in line:
+                    continue
+                token, count = line.split(", ")
                 if token == "":
                     token = "\n"  # Should be correct token
-                self.truncated_vocabulary[token] = int(count)
+                self.truncated_vocabulary[token] = int(count.strip())
         self._assign_tag_token()
 
     def _assign_tag_token(self):
         self.tag_token = None
         token_id = 0
         while self.tag_token is None:
-            if chr(token_id) not in self.vocabulary:
+            if chr(token_id) not in self.truncated_vocabulary:
                 self.tag_token = chr(token_id)
 
     @property
@@ -796,8 +814,8 @@ class DatasetCollection:
         partition_description = self.name + "\n"
         for part in partition:
             partition_description += "\n\n<" + part + ">\n\n"
-            for document_path in partition[path]:
-                partition_description += document_path + " || " + file_name + "\n"
+            for doc_path, doc_file_name in partition[part]:
+                partition_description += doc_path + " || " + doc_file_name + "\n"
 
         # Store
         partition_file_name = self.name.replace(" ", "_") + "_partition.txt"
@@ -874,15 +892,16 @@ class DatasetCollection:
                                    "targets": encoded_tokens[1:]}
 
 
-def generate_vocabulary(corpora):
-    if corpora == GUTENBERG[1]:
-        print("\nGenerating vocabulary...")
-        self.dataset_collection = DatasetCollection(
-            "gutenberg dataset", *get_gutenberg_dataset(), 
-            partition_type="document", load_texts=True)
+def setup_dataset(corpora, vocab_generated=False):
+    if corpora == [GUTENBERG[1]]:
+        if not vocab_generated:
+            print("\nGenerating vocabulary...")
+            dataset_collection = DatasetCollection(
+                "gutenberg dataset", *get_gutenberg_dataset(), 
+                partition_type="document", load_texts=True)
+            del dataset_collection
         print("\nVocabulary generated! Partitioning datasets...")
-        del self.dataset_collection
-        self.dataset_collection = DatasetCollection(
+        dataset_collection = DatasetCollection(
             "gutenberg dataset", *get_gutenberg_dataset(), 
             partition_type="document")
         print("\nDatasets partitioned!")
@@ -955,5 +974,5 @@ def replace_rare_tokens(text_list_tokens, threshold=3):
 
 if __name__ == '__main__':
     start_time = time()
-    generate_vocabulary(GUTENBERG[1])
+    setup_dataset([GUTENBERG[1]], vocab_generated=True)
     print("\nDuration:", time() - start_time)
