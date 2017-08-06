@@ -150,11 +150,12 @@ def get_classification(directory_path):
 
 class MultiLmProblem(Problem):
 
-    def generate_data(self, data_dir, tmp_dir):
-        data_paths = [os.path.join(BASE_DIR, "t2t_data")]
+    def generate_data(self, data_dir, tmp_dir, task_id=-1):
         generator_utils.generate_dataset_and_shuffle(
-            self.dataset_collection.training_generator(), data_paths, 
-            self.dataset_collection.validation_generator(), data_paths)
+            self.dataset_collection.training_generator(), 
+            self.training_filepaths(data_dir, 1, shuffled=False), 
+            self.dataset_collection.validation_generator(), 
+            self.dev_filepaths(data_dir, 1, shuffled=False))
 
     def dataset_filename(self):
         return BASE_DIR
@@ -303,30 +304,19 @@ class CustomTokenTextEncoder(TokenTextEncoder):
     def __init__(self, *args, extra_tokens=[], **kwargs):
         self._extra_tokens = extra_tokens
         super(CustomTokenTextEncoder, self).__init__(*args, **kwargs)
+        self._add_extra_tokens()
 
-    def _load_vocab_from_file(self, filename):
-        self._token_to_id = {}
-        self._id_to_token = {}
+    def encode(self, tokens):
+        """Converts a list of tokens to a list of ids."""
+        ret = [self._token_to_id[tok] for tok in tokens]
+        return ret[::-1] if self._reverse else ret
 
-        for idx, tok in enumerate(RESERVED_TOKENS):
-            self._token_to_id[tok] = idx
-            self._id_to_token[idx] = tok
-
-        token_start_idx = self._num_reserved_ids
-        with tf.gfile.Open(filename) as file:
-            for i, line in enumerate(file):
-                if ", " not in line:
-                    continue
-                idx = token_start_idx + i
-                tok, _ = line.split(", ")
-                if tok == "":
-                    tok = "\n"  # Should be correct token
-                self._token_to_id[tok] = idx
-                self._id_to_token[idx] = tok
-            for tok in self._extra_tokens:
-                idx += 1
-                self._token_to_id[tok] = idx
-                self._id_to_token[idx] = tok
+    def _add_extra_tokens(self):
+        token_id = max(self._id_to_token) + 1
+        for token in self._extra_tokens:
+            self._id_to_token[token_id] = token
+            self._token_to_id[token] = token_id
+            token_id += 1
 
 
 class Document(object):
@@ -373,7 +363,7 @@ class Document(object):
         return tokenize(string, self.language, self.file_name)
 
     def encode(self, tokens, encoder):
-        return encoder.encoder(tokens)
+        return encoder.encode(tokens)
 
     @classmethod
     def assign_documents(cls, documents, training, validation, test):
@@ -517,9 +507,6 @@ class Corpus:
     def _load_documents(self):
         print("Loading", self.name, "documents...")
         self.documents = []
-        self.training_documents = []
-        self.validation_documents = []
-        self.test_documents = []
         for dir_path, dir_names, file_names in os.walk(self.directory_path):
             if "processed" not in dir_path.split("\\") or "_skip_" in dir_path:
                 continue
@@ -549,9 +536,6 @@ class Corpus:
     def _load_document_metadata(self):
         print("Loading", self.name, "document metadata...")
         self.documents = []
-        self.training_documents = []
-        self.validation_documents = []
-        self.test_documents = []
         for dir_path, dir_names, file_names in os.walk(self.directory_path):
             if "processed" not in dir_path.split("\\") or "_skip_" in dir_path:
                 continue
@@ -630,13 +614,6 @@ class Corpus:
             else:
                 raise NotImplementedError("Unexpected partition type!")
             self.category_tree.partition(partition_level)
-
-        self.training_documents = [document for document in self.documents
-                                   if document.assignment == "training"]
-        self.validation_documents = [document for document in self.documents
-                                     if document.assignment == "validation"]
-        self.test_documents = [document for document in self.documents
-                               if document.assignment == "test"]
 
     def partition_by_folders(self, training=0.8, validation=0.1):
         shuffle(self.documents)
@@ -723,8 +700,9 @@ class DatasetCollection:
             self._load_vocabulary()
             self._partition(partition_type=partition_type)
             self.text_encoder = CustomTokenTextEncoder(
-                self.vocab_file_path, 
-                extra_tokens=[self.tag_token, self.unknown_token])
+                None,
+                extra_tokens=[self.tag_token, self.unknown_token],
+                vocab_list=self.truncated_vocabulary.keys())
 
     def __repr__(self):
         return ("<DatasetCollection(name={}, directory_path={}, "
@@ -770,6 +748,8 @@ class DatasetCollection:
         # Assumes the path of the vocabulary file
         vocab_file_name = (self.name.replace(" ", "_") + "_vocabulary_" 
                            + str(self.vocab_size) + ".txt")
+
+        # Load document vocabulary
         self.vocab_file_path = os.path.join(self.directory_path, vocab_file_name)
         self.truncated_vocabulary = Counter()
         with open(self.vocab_file_path, "r", encoding="utf-8") as vocab_file:
@@ -779,7 +759,16 @@ class DatasetCollection:
                 token, count = line.split(", ")
                 if token == "":
                     token = "\n"  # Should be correct token
-                self.truncated_vocabulary[token] = int(count.strip())
+                self.truncated_vocabulary[token] = (
+                    int(count.strip()) if count.strip() else None)
+
+        # Add category tags to the vocabulary
+        for corpus in self.corpora:
+            for document in corpus.documents:
+                for category in document.classification:
+                    for token in category.split(" "):
+                        if token not in self.truncated_vocabulary:
+                            self.truncated_vocabulary[token] = None
         self._assign_tag_token()
 
     def _assign_tag_token(self):
@@ -843,14 +832,14 @@ class DatasetCollection:
                         if corpus.directory_path not in line:
                             continue
                         for document in corpus.documents:
-                            if (document.directory_path == directory_path 
+                            if (document.file_path == directory_path 
                                     and document.file_name == file_name):
                                 document.assignment = dataset_type
 
-    def train_generator(self):
+    def training_generator(self):
         return self._generator("training")
 
-    def valid_generator(self):
+    def validation_generator(self):
         return self._generator("validation")
 
     def test_generator(self):
@@ -858,6 +847,8 @@ class DatasetCollection:
 
     def encode_line(self, line, document, first_line=False):
         tag_tokens = []
+        tags = chain.from_iterable([category.split(" ") for category 
+                                    in document.classification])
         if first_line:
             for tag in tags:
                 tag_tokens.extend([self.tag_token, tag, self.tag_token])
@@ -865,7 +856,7 @@ class DatasetCollection:
         # Replace OOV tokens
         tokens = [token if token in self.truncated_vocabulary 
                   else self.unknown_token for token in tokens]  
-        return document.encode(tag_tokens + tokens, self.encoder)
+        return document.encode(tag_tokens + tokens, self.text_encoder)
 
     def _generator(self, dataset_type):
         for corpus in self.corpora:
@@ -875,7 +866,7 @@ class DatasetCollection:
                 documents = corpus.validation_documents
             for document in documents:
                 if document.file_path.endswith(".tar"):
-                    with CustomTarFile(file_path, "r") as tar:
+                    with CustomTarFile(document.file_path, "r") as tar:
                         for i, line in enumerate(tar.read_lines(encoding="utf-8")):
                             first_line = True if i == 0 else False
                             encoded_tokens = self.encode_line(
@@ -883,7 +874,7 @@ class DatasetCollection:
                             yield {"inputs": encoded_tokens[:-1], 
                                    "targets": encoded_tokens[1:]}
                 else:
-                    with open(file_path, "r", encoding="utf-8") as file:
+                    with open(document.file_path, "r", encoding="utf-8") as file:
                         for i, line in enumerate(file):
                             first_line = True if i == 0 else False
                             encoded_tokens = self.encode_line(
