@@ -10,8 +10,8 @@ TODO: Add character convolution neural network input layer (modality?)
       May need to implement importance sampling (or some other scheme...)
 """
 
-from tensor2tensor.models import (lstm, attention_lm, attention_lm_moe, 
-                                  common_layers, common_hparams)
+from tensor2tensor.models import lstm, attention_lm, attention_lm_moe
+from tensor2tensor.layers import common_layers, common_hparams
 from tensor2tensor.utils import registry, t2t_model
 
 
