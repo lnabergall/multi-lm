@@ -101,6 +101,29 @@ LEIDEN_WEIBO_CORPUS = ("leiden_weibo_corpus-messages",
 UNKNOWN_TOKEN = "<UNK>"
 
 
+def blocks(file):
+    while True:
+        b = file.read(65536)
+        if not b: 
+            break
+        else:
+            yield b
+
+
+def line_count(file):
+    return sum(block.count("\n") for block in blocks(file))
+
+
+def partition_list(sequence, partition_size):
+    partition = [sequence[i:i+partition_size] 
+                 for i in range(0, len(sequence), partition_size)]
+    if len(partition[-1]) < 35:
+        partition[-2] += partition[-1]
+        del partition[-1]
+
+    return partition
+
+
 def get_all_corpora_info():
     corpora_info = []
     for name, value in globals().items():
@@ -156,9 +179,6 @@ class MultiLmProblem(Problem):
             self.training_filepaths(data_dir, 1, shuffled=False), 
             self.dataset_collection.validation_generator(), 
             self.dev_filepaths(data_dir, 1, shuffled=False))
-
-    def dataset_filename(self):
-        return BASE_DIR
 
     def hparams(self, defaults, model_hparams):
         modality_spec = (registry.Modalities.SYMBOL, self.vocab_size)
@@ -864,7 +884,8 @@ class DatasetCollection:
                 documents = corpus.training_documents
             elif dataset_type == "validation":
                 documents = corpus.validation_documents
-            for document in documents:
+            for i, document in enumerate(documents):
+                print("Loading document", str(i) + "...")
                 if document.file_path.endswith(".tar"):
                     with CustomTarFile(document.file_path, "r") as tar:
                         for i, line in enumerate(tar.read_lines(encoding="utf-8")):
@@ -875,12 +896,34 @@ class DatasetCollection:
                                    "targets": encoded_tokens[1:]}
                 else:
                     with open(document.file_path, "r", encoding="utf-8") as file:
-                        for i, line in enumerate(file):
-                            first_line = True if i == 0 else False
+                        first_line = True
+                        output_ready = True
+                        encoded_token_sequences = None
+                        for line in file:
                             encoded_tokens = self.encode_line(
                                 line, document, first_line=first_line)
-                            yield {"inputs": encoded_tokens[:-1], 
-                                   "targets": encoded_tokens[1:]}
+                            if not output_ready:
+                                encoded_tokens = prev_encoded_tokens + encoded_tokens
+                                prev_encoded_tokens = None
+                            if len(encoded_tokens) < 40:
+                                output_ready = False
+                                prev_encoded_tokens = encoded_tokens
+                            elif len(encoded_tokens) > 80:
+                                encoded_token_sequences = partition_list(
+                                    encoded_tokens, 50)
+                                output_ready = True
+                            else:
+                                output_ready = True
+                            if output_ready:
+                                if encoded_token_sequences:
+                                    for encoded_tokens in encoded_token_sequences:
+                                        yield {"inputs": encoded_tokens[:-1], 
+                                               "targets": encoded_tokens[1:]}
+                                    encoded_token_sequences = None
+                                else:
+                                    yield {"inputs": encoded_tokens[:-1], 
+                                           "targets": encoded_tokens[1:]}
+                            first_line = False
 
 
 def setup_dataset(corpora, vocab_generated=False):
