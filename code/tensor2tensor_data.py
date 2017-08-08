@@ -619,7 +619,7 @@ class Corpus:
     def partition(self, partition_type):
         """
         Args:
-            partition_level: String, expects 'training', 'validation',
+            partition_type: String, expects 'training', 'validation',
                 'test', 'corpus', or 'document'. 
                 TODO: add support for 'author'.
         """
@@ -697,7 +697,19 @@ class Corpus:
 class DatasetCollection:
     
     def __init__(self, name, directory_path, corpora_info, vocab_size, 
-                 partition_type=None, load_texts=False):
+                 partition_type=None, load_texts=False, data_balancing=None):
+        """
+        Args:
+            corpora_info: List, expects a list of the form
+                [(corpus_directory1, name1, classification1), ...], 
+                where classification1 is tuple or list of categories.
+            partition_type: String, expects 'training', 'validation',
+                'test', 'corpus', or 'document'. Defaults to None.
+                TODO: add support for 'author'. 
+            data_balancing: Tuple, expects a tuple of the form 
+                (type, max_tokens), where type is either 'truncate'
+                or 'equalize'. 
+        """
         self.name = name
         self.directory_path = directory_path
         self.category_tree = CategoryTree("language")
@@ -718,7 +730,8 @@ class DatasetCollection:
             self._print_statistics()
         else:
             self._load_vocabulary()
-            self._partition(partition_type=partition_type)
+            self._partition(partition_type=partition_type, 
+                            data_balancing=data_balancing)
             self.text_encoder = CustomTokenTextEncoder(
                 None,
                 extra_tokens=[self.tag_token, self.unknown_token],
@@ -803,7 +816,7 @@ class DatasetCollection:
         return sum(count for token, count in self.vocabulary.items() 
                    if token not in self.truncated_vocabulary)
 
-    def _partition(self, partition_type=None):
+    def _partition(self, partition_type=None, data_balancing=None):
         if partition_type is not None:
             for corpus in self.corpora:
                 corpus.partition(partition_type)
