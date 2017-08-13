@@ -73,10 +73,22 @@ LEIDEN_WEIBO_CORPUS = ("leiden_weibo_corpus-messages",
                        "leiden weibo corpus", "microblog")
 
 
+DOCUMENT_SEPARATOR = "\n\n<document_separator>\n\n"
+
+
 class CustomTarFile(tarfile.TarFile):
     """
     Higher-level interface for manipulating tar files; built upon TarFile.
     """
+    def read_file(self, file_name, encoding=None):
+        text_tarinfo = self.getmember(file_name)
+        text_file = self.extractfile(file_name)
+        if not encoding:
+            encoding = get_encoding(file_object=text_file)
+        text = text_tarinfo.tobuf(encoding=encoding).read()
+
+        return text
+
     def read_files(self, encoding=None):
         texts = []
         file_names = []
@@ -91,8 +103,9 @@ class CustomTarFile(tarfile.TarFile):
 
         return texts, file_names
 
-    def read_lines(self, encoding=None):
-        for file_name in self.get_names():
+    def read_lines(self, encoding=None, file_name=None):
+        file_names = [file_name] if file_name else self.get_names()
+        for file_name in file_names:
             text_tarinfo = self.getmember(file_name)
             text_file = self.extractfile(file_name)
             if not encoding:
@@ -709,7 +722,7 @@ def prepare_corpus_folder(corpus, root_path):
                         if corpus in [BLOG_CORPUS, PAROLE_CORPUS, 
                                       LANCASTER_CORPUS, LEIDEN_WEIBO_CORPUS]:
                             processed_file.write(
-                                "\n\n<document_separator>\n\n".join(cleaned_texts))
+                                DOCUMENT_SEPARATOR.join(cleaned_texts))
                         else:
                             processed_file.write(cleaned_text)
                 except FileNotFoundError as e:
