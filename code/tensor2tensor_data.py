@@ -99,6 +99,7 @@ LEIDEN_WEIBO_CORPUS = ("leiden_weibo_corpus-messages",
 
 
 UNKNOWN_TOKEN = "<UNK>"
+TOKEN_SEPARATOR = "<token_separator>"
 
 
 def blocks(file):
@@ -122,6 +123,37 @@ def partition_list(sequence, partition_size):
         del partition[-1]
 
     return partition
+
+
+def invert_function(function):
+    function_inverse = {}
+    for key, value in function.items():
+        function_inverse[value] = key
+
+    return function_inverse
+
+
+def truncate_counts(truncation_dict, bound):
+    """
+    Args:
+        truncation_dict: Dictionary of the form 
+            {count1: element1, count2: element2, ...}.
+        bound: Integer.
+    """
+    sequence = truncation_dict.values()
+    inverse_truncation_dict = invert_function(truncation_dict)
+    removal_dict = {element: 0 for element in sequence}
+    total_count = sum(count for count in truncation_dict)
+
+    def get_updated_count(element):
+        return inverse_truncation_dict[element] - removal_dict[element]
+
+    while total_count > bound:
+        current_element = max(sequence, key=get_updated_count)
+        removal_dict[current_element] += 1
+        total_count -= 1
+
+    return removal_dict
 
 
 def get_all_corpora_info():
@@ -343,7 +375,7 @@ class Document(object):
 
     __slots__ = ["text", "classification", "language", 
                  "file_name", "file_path", "assignment", 
-                 "ids", "tokens"]
+                 "copies", "ids", "tokens"]
 
     def __init__(self, file_name, file_path, classification, 
                  text=None, tokenize=True, assignment=None):
@@ -353,6 +385,7 @@ class Document(object):
         self.file_name = file_name
         self.file_path = file_path
         self.assignment = assignment
+        self.copies = 1
         if text and tokenize:
             self._tokenize()
             print("Document", self.file_name, "loaded!")
@@ -375,12 +408,66 @@ class Document(object):
     def _decode(self, encoder):
         self.tokens = encoder.decode(self.ids)
 
+    @property
+    def token_count(self):
+        if self.tokens:
+            token_count = len(self.tokens)
+        else:
+            self.load_tokens()
+            token_count = len(self.tokens)
+            self.tokens = None
+
+        return token_count
+
+    @property
+    def token_file_path_and_name(self):
+        if self.file_path.endswith(".tar"):
+            token_file_path = self.file_path[:-4] + "_tokens.tar"
+        else:
+            token_file_path = self.file_path[:-4] + "_tokens.txt"
+        return token_file_path, self.file_name[:-4] + "_tokens.txt"
+
     def load_text(text):
         self.text = text
         self._tokenize()
 
     def tokenize(self, string):
-        return tokenize(string, self.language, self.file_name)
+        if TOKEN_SEPARATOR in string:
+            return string.split(TOKEN_SEPARATOR)
+        else:
+            return tokenize(string, self.language, self.file_name)
+
+    def store_tokens(self):
+        token_file_path, token_file_name = self.token_file_path_and_name
+        if self.file_path.endswith(".tar"):
+            if os.path.exists(token_file_path):
+                mode = "a"
+            else:
+                mode = "w"
+            with CustomTarFile(token_file_path, mode, 
+                               encoding="utf-8") as token_tar_file:
+                try:
+                    token_tar_file.getmember(token_file_name)
+                except KeyError:
+                    token_string = TOKEN_SEPARATOR.join(self.tokens)
+                    tar_file.add_text_file(token_string, token_file_name)
+        else:
+            if not os.path.exists(token_file_path):
+                with open(token_file_path, "w", encoding="utf-8") as token_file:
+                    token_file.write(TOKEN_SEPARATOR.join(self.tokens))
+        self.text = None
+        self.tokens = None
+
+    def load_tokens(self):
+        token_file_path, token_file_name = self.token_file_path_and_name
+        if self.file_path.endswith(".tar"):
+            with CustomTarFile(token_file_path, "r", 
+                               encoding="utf-8") as token_tar_file:
+                text = token_tar_file.read_file(token_file_name)
+        else:
+            with open(token_file_path, "r", encoding="utf-8") as token_file:
+                text = token_file.read()
+        self.tokens = text.split(TOKEN_SEPARATOR)
 
     def encode(self, tokens, encoder):
         return encoder.encode(tokens)
@@ -512,9 +599,8 @@ class Corpus:
         self.classification = classification
 
         if load_texts:
-            self._load_documents()
+            self._load_documents_and_vocabulary()
             self._extend_category_tree(dataset_collection_category_tree)
-            self._build_vocabulary()
             self._save_vocabulary()
         else:
             self._load_document_metadata()
@@ -524,9 +610,11 @@ class Corpus:
         return "<Corpus(name={}, directory_path={}, classification={})>".format(
             self.name, self.directory_path, self.classification)
 
-    def _load_documents(self):
+    def _load_documents_and_vocabulary(self):
         print("Loading", self.name, "documents...")
         self.documents = []
+        self.vocabulary = Counter()
+        self.token_count = 0
         for dir_path, dir_names, file_names in os.walk(self.directory_path):
             if "processed" not in dir_path.split("\\") or "_skip_" in dir_path:
                 continue
@@ -540,13 +628,21 @@ class Corpus:
                             self.documents.append(
                                 Document(file_name, file_path, 
                                          classification, text=text))
+                            self.vocabulary.update(
+                                Counter(self.documents[-1].tokens))
+                            self.token_count += len(self.documents[-1].tokens)
+                            self.documents[-1].store_tokens()
                     else:
                         text = open_file(file_path, encoding="utf-8")
                         for doc_text in text.split("\n\n<document_separator>\n\n"):
                             self.documents.append(
                                 Document(file_name, file_path, 
                                          classification, text=doc_text))
-        self.token_count = sum(len(document.tokens) for document in self.documents)
+                            self.vocabulary.update(
+                                Counter(self.documents[-1].tokens))
+                            self.token_count += len(self.documents[-1].tokens)
+                            self.documents[-1].store_tokens()
+        shuffle(self.documents)
 
     def _extend_category_tree(self, base_category_tree):
         self.category_tree = base_category_tree
@@ -573,8 +669,10 @@ class Corpus:
                     else:
                         self.documents.append(
                             Document(file_name, file_path, classification))
+        shuffle(self.documents)
 
     def _load_text(self, document_batch=None, batches=None):
+        # TODO: Finish...?
         # TODO: add support for tar files and files with document separators
         if document_batch is not None:
             document_indices = list(range(len(self.documents)))[
@@ -616,6 +714,14 @@ class Corpus:
         return [document for document in self.documents 
                 if document.assignment == "test"]
 
+    @property
+    def training_tokens(self):
+        return sum(document.token_count for document in self.training_documents)
+
+    @property
+    def validation_tokens(self):
+        return sum(document.token_count for document in self.validation_documents)
+
     def partition(self, partition_type):
         """
         Args:
@@ -635,8 +741,36 @@ class Corpus:
                 raise NotImplementedError("Unexpected partition type!")
             self.category_tree.partition(partition_level)
 
+    def truncate(self, token_removal_count):
+        training_documents = self.training_documents
+        removed_tokens = 0
+        removed_documents = 0
+        while removed_tokens < token_removal_count:
+            document = training_documents[removed_documents]
+            removed_tokens += document.token_count
+            document.copies = 0
+            removed_documents += 1
+
+    def equalize(self, token_count):
+        previous_count = self.training_tokens
+        if token_count < previous_count:
+            removed_tokens = 0
+            removed_documents = 0
+            while token_count < previous_count - removed_tokens:
+                document = training_documents[removed_documents]
+                removed_tokens += document.token_count
+                document.copies = 0
+                removed_documents += 1
+        else:
+            added_tokens = 0
+            added_documents = 0
+            while token_count > previous_count + added_tokens:
+                document = training_documents[added_documents]
+                added_tokens += document.token_count
+                document.copies += 1
+                added_documents += 1
+
     def partition_by_folders(self, training=0.8, validation=0.1):
-        shuffle(self.documents)
         training_count = int(training*len(self.documents))
         validation_count = int(validation*len(self.documents))
         self.training_documents = [
@@ -818,8 +952,17 @@ class DatasetCollection:
 
     def _partition(self, partition_type=None, data_balancing=None):
         if partition_type is not None:
+            if data_balancing and data_balancing[0] == "truncate":
+                max_tokens = data_balancing[1]
+                token_counts = {corpus.training_tokens: corpus 
+                                for corpus in self.corpora}
+                removal_counts = truncate_counts(token_counts, max_tokens)
             for corpus in self.corpora:
                 corpus.partition(partition_type)
+                if data_balancing and data_balancing[0] == "truncate":
+                    corpus.truncate(removal_counts[corpus])
+                elif data_balancing and data_balancing[0] == "equalize":
+                    corpus.equalize(data_balancing[1]//len(self.corpora))
             self._store_partition()
         else:
             self._load_partition()
@@ -829,8 +972,9 @@ class DatasetCollection:
         partition = {"training": [], "validation": [], "test": []}
         for corpus in self.corpora:
             for document in corpus.documents:
-                partition[document.assignment].append(
-                    (document.file_path, document.file_name))
+                for i in range(document.copies):
+                    partition[document.assignment].append(
+                        (document.file_path, document.file_name))
 
         # Make partition description
         partition_description = self.name + "\n"
@@ -868,6 +1012,16 @@ class DatasetCollection:
                             if (document.file_path == directory_path 
                                     and document.file_name == file_name):
                                 document.assignment = dataset_type
+                                if (prev_directory_path == directory_path
+                                        and prev_file_name == file_name):
+                                    document.copies += 1
+                    prev_directory_path = directory_path
+                    prev_file_name = file_name
+
+        for corpus in self.corpora:
+            for document in corpus.documents:
+                if document.assignment is None:
+                    document.copies = 0
 
     def training_generator(self):
         return self._generator("training")
@@ -880,77 +1034,88 @@ class DatasetCollection:
 
     def encode_line(self, line, document, first_line=False):
         tag_tokens = []
-        tags = chain.from_iterable([category.split(" ") for category 
-                                    in document.classification])
+        tag_list = [category.split(" ") for category in document.classification]
         if first_line:
-            for tag in tags:
-                tag_tokens.extend([self.tag_token, tag, self.tag_token])
-        tokens = document.tokenize(line)
+            for i, tags in enumerate(tag_list):
+                tag_tokens.extend([self.tag_token] + tags + [self.tag_token])
+        if TOKEN_SEPARATOR in line:
+            tokens = line.split(TOKEN_SEPARATOR)
+        else:
+            tokens = document.tokenize(line)
         # Replace OOV tokens
         tokens = [token if token in self.truncated_vocabulary 
                   else self.unknown_token for token in tokens]  
         return document.encode(tag_tokens + tokens, self.text_encoder)
 
+    def generate_lines(self, line_generator):
+        first_line = True
+        output_ready = True
+        encoded_token_sequences = None
+        for line in line_generator:
+            encoded_tokens = self.encode_line(
+                line, document, first_line=first_line)
+            if not output_ready:
+                encoded_tokens = prev_encoded_tokens + encoded_tokens
+                prev_encoded_tokens = None
+            if len(encoded_tokens) < 40:
+                output_ready = False
+                prev_encoded_tokens = encoded_tokens
+            elif len(encoded_tokens) > 80:
+                encoded_token_sequences = partition_list(
+                    encoded_tokens, 50)
+                output_ready = True
+            else:
+                output_ready = True
+            if output_ready:
+                if encoded_token_sequences:
+                    for encoded_tokens in encoded_token_sequences:
+                        yield {"inputs": encoded_tokens[:-1], 
+                               "targets": encoded_tokens[1:]}
+                    encoded_token_sequences = None
+                else:
+                    yield {"inputs": encoded_tokens[:-1], 
+                           "targets": encoded_tokens[1:]}
+            first_line = False 
+
     def _generator(self, dataset_type):
         for corpus in self.corpora:
             if dataset_type == "training":
                 documents = corpus.training_documents
+                documents = chain.from_iterable(
+                    [[document for i in range(document.copies)] 
+                     for document in documents])
             elif dataset_type == "validation":
                 documents = corpus.validation_documents
             for i, document in enumerate(documents):
                 print("Loading document", str(i) + "...")
+                token_file_path, token_file_name = document.token_file_path_and_name
                 if document.file_path.endswith(".tar"):
-                    with CustomTarFile(document.file_path, "r") as tar:
-                        for i, line in enumerate(tar.read_lines(encoding="utf-8")):
-                            first_line = True if i == 0 else False
-                            encoded_tokens = self.encode_line(
-                                line, document, first_line=first_line)
-                            yield {"inputs": encoded_tokens[:-1], 
-                                   "targets": encoded_tokens[1:]}
+                    with CustomTarFile(token_file_path, "r", encoding="utf-8") as tar:
+                        for training_example in self.generate_lines(
+                                tar.read_lines(encoding="utf-8", 
+                                               file_name=token_file_name)):
+                            yield training_example
                 else:
-                    with open(document.file_path, "r", encoding="utf-8") as file:
-                        first_line = True
-                        output_ready = True
-                        encoded_token_sequences = None
-                        for line in file:
-                            encoded_tokens = self.encode_line(
-                                line, document, first_line=first_line)
-                            if not output_ready:
-                                encoded_tokens = prev_encoded_tokens + encoded_tokens
-                                prev_encoded_tokens = None
-                            if len(encoded_tokens) < 40:
-                                output_ready = False
-                                prev_encoded_tokens = encoded_tokens
-                            elif len(encoded_tokens) > 80:
-                                encoded_token_sequences = partition_list(
-                                    encoded_tokens, 50)
-                                output_ready = True
-                            else:
-                                output_ready = True
-                            if output_ready:
-                                if encoded_token_sequences:
-                                    for encoded_tokens in encoded_token_sequences:
-                                        yield {"inputs": encoded_tokens[:-1], 
-                                               "targets": encoded_tokens[1:]}
-                                    encoded_token_sequences = None
-                                else:
-                                    yield {"inputs": encoded_tokens[:-1], 
-                                           "targets": encoded_tokens[1:]}
-                            first_line = False
+                    with open(token_file_path, "r", encoding="utf-8") as file:
+                        for training_example in self.generate_lines(file):
+                            yield training_example
 
 
 def setup_dataset(corpora, vocab_generated=False):
     if corpora == [GUTENBERG[1]]:
         if not vocab_generated:
-            print("\nGenerating vocabulary...")
+            print("\nGenerating vocabulary and token files...")
             dataset_collection = DatasetCollection(
-                "gutenberg dataset", *get_gutenberg_dataset(), 
-                partition_type="document", load_texts=True)
+                "gutenberg dataset", 
+                *get_gutenberg_dataset(), 
+                load_texts=True)
             del dataset_collection
         print("\nVocabulary generated! Partitioning datasets...")
         dataset_collection = DatasetCollection(
-            "gutenberg dataset", *get_gutenberg_dataset(), 
-            partition_type="document")
+            "gutenberg dataset", 
+            *get_gutenberg_dataset(), 
+            partition_type="document", 
+            data_balancing=("truncate", 10000000))
         print("\nDatasets partitioned!")
 
 
@@ -1021,5 +1186,5 @@ def replace_rare_tokens(text_list_tokens, threshold=3):
 
 if __name__ == '__main__':
     start_time = time()
-    setup_dataset([GUTENBERG[1]], vocab_generated=True)
+    setup_dataset([GUTENBERG[1]], vocab_generated=False)
     print("\nDuration:", time() - start_time)
