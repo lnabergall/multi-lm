@@ -99,7 +99,7 @@ LEIDEN_WEIBO_CORPUS = ("leiden_weibo_corpus-messages",
 
 
 UNKNOWN_TOKEN = "<UNK>"
-TOKEN_SEPARATOR = "<token_separator>"
+TOKEN_SEPARATOR = "<TkSp>"
 
 
 def blocks(file):
@@ -312,7 +312,7 @@ class MultiLmNaturalLangTest(MultiLmProblem):
 
 
 def get_gutenberg_dataset():
-    """The Gutenberg corpus and a vocabulary size of 250000"""
+    """The Gutenberg corpus and a vocabulary size of 100000"""
     vocab_size = 100000
     directory_path = BASE_DIR
     corpora_info = get_corpora(directory_path, corpora=[GUTENBERG[1],])
@@ -386,6 +386,7 @@ class Document(object):
         self.file_path = file_path
         self.assignment = assignment
         self.copies = 1
+        self.tokens = None
         if text and tokenize:
             self._tokenize()
             print("Document", self.file_name, "loaded!")
@@ -467,7 +468,11 @@ class Document(object):
         else:
             with open(token_file_path, "r", encoding="utf-8") as token_file:
                 text = token_file.read()
-        self.tokens = text.split(TOKEN_SEPARATOR)
+        if TOKEN_SEPARATOR not in text:
+            token_separator = "<token_separator>"
+        else:
+            token_separator = TOKEN_SEPARATOR
+        self.tokens = text.split(token_separator)
 
     def encode(self, tokens, encoder):
         return encoder.encode(tokens)
@@ -952,13 +957,14 @@ class DatasetCollection:
 
     def _partition(self, partition_type=None, data_balancing=None):
         if partition_type is not None:
+            for corpus in self.corpora:
+                corpus.partition(partition_type)
             if data_balancing and data_balancing[0] == "truncate":
                 max_tokens = data_balancing[1]
                 token_counts = {corpus.training_tokens: corpus 
                                 for corpus in self.corpora}
                 removal_counts = truncate_counts(token_counts, max_tokens)
             for corpus in self.corpora:
-                corpus.partition(partition_type)
                 if data_balancing and data_balancing[0] == "truncate":
                     corpus.truncate(removal_counts[corpus])
                 elif data_balancing and data_balancing[0] == "equalize":
@@ -1002,6 +1008,8 @@ class DatasetCollection:
                 dataset_type = "validation"
             elif i == 2:
                 dataset_type = "test"
+            prev_directory_path = None
+            prev_file_name = None
             for line in part_file_names.split("\n"):
                 if line.strip() and not line.startswith("<"):
                     directory_path, file_name = line.split(" || ")
@@ -1047,7 +1055,7 @@ class DatasetCollection:
                   else self.unknown_token for token in tokens]  
         return document.encode(tag_tokens + tokens, self.text_encoder)
 
-    def generate_lines(self, line_generator):
+    def generate_lines(self, line_generator, document):
         first_line = True
         output_ready = True
         encoded_token_sequences = None
@@ -1093,11 +1101,12 @@ class DatasetCollection:
                     with CustomTarFile(token_file_path, "r", encoding="utf-8") as tar:
                         for training_example in self.generate_lines(
                                 tar.read_lines(encoding="utf-8", 
-                                               file_name=token_file_name)):
+                                               file_name=token_file_name), 
+                                document):
                             yield training_example
                 else:
                     with open(token_file_path, "r", encoding="utf-8") as file:
-                        for training_example in self.generate_lines(file):
+                        for training_example in self.generate_lines(file, document):
                             yield training_example
 
 
@@ -1186,5 +1195,5 @@ def replace_rare_tokens(text_list_tokens, threshold=3):
 
 if __name__ == '__main__':
     start_time = time()
-    setup_dataset([GUTENBERG[1]], vocab_generated=False)
+    setup_dataset([GUTENBERG[1]], vocab_generated=True)
     print("\nDuration:", time() - start_time)
