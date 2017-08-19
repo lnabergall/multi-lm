@@ -1001,7 +1001,8 @@ class DatasetCollection:
         partition_file_path = os.path.join(
             self.directory_path, partition_file_name)
         partition_description = open_file(partition_file_path)
-        for i, part_file_names in enumerate(partition_description.split("\n\n")[1:]):
+        for i, part_file_names in enumerate(
+                partition_description.split("\n\n\n")[1:]):
             if i == 0:
                 dataset_type = "training"
             elif i == 1:
@@ -1089,9 +1090,9 @@ class DatasetCollection:
         for corpus in self.corpora:
             if dataset_type == "training":
                 documents = corpus.training_documents
-                documents = chain.from_iterable(
+                documents = list(chain.from_iterable(
                     [[document for i in range(document.copies)] 
-                     for document in documents])
+                     for document in documents]))
             elif dataset_type == "validation":
                 documents = corpus.validation_documents
             for i, document in enumerate(documents):
