@@ -97,3 +97,15 @@ def lstm_large():
     params.num_hidden_layers = 4
     return hparams
 
+
+@registry.register_hparams
+def attention_lm_tiny():
+    """Set of hyperparameters for the attention network."""
+    hparams = attention_lm.attention_lm_base()
+    hparams.batch_size = 2048
+    hparams.num_hidden_layers = 1
+    hparams.hidden_size = 256
+    hparams.filter_size = 1024
+    hparams.layer_prepostprocess_dropout = 0.5
+    # hparams.shared_embedding_and_softmax_weights = int(True)
+    return hparams
