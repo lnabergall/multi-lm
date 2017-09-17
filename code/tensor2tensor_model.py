@@ -109,3 +109,15 @@ def attention_lm_tiny():
     hparams.layer_prepostprocess_dropout = 0.5
     # hparams.shared_embedding_and_softmax_weights = int(True)
     return hparams
+
+
+@registry.register_hparams
+def attention_lm_small_custom():
+    """Set of hyperparameters for the attention network."""
+    hparams = attention_lm.attention_lm_small()
+    hparams.batch_size = 2048
+    hparams.hidden_size = 288
+    hparams.filter_size = 1024
+    hparams.num_hidden_layers = 4
+    # hparams.shared_embedding_and_softmax_weights = int(True)
+    return hparams

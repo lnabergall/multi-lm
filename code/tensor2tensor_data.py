@@ -945,10 +945,12 @@ class DatasetCollection:
 
     def _assign_tag_token(self):
         self.tag_token = None
-        token_id = 0
+        token_id = 32
         while self.tag_token is None:
             if chr(token_id) not in self.truncated_vocabulary:
                 self.tag_token = chr(token_id)
+        print("Tag token:", self.tag_token)
+        print("Tag token ID:", ord(self.tag_token))
 
     @property
     def unknown_token_count(self):

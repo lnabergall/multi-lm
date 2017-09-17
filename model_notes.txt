@@ -1,22 +1,36 @@
 Current Notes:
-- Generate sample output
-- Try copy task on sequences with same distribution as descriptions or code and use the same truncated backprop method
-- Setup Tensorboard
-- Start simplifications (e.g. training on only a few description2code examples)
+- Add better early stopping (still conservative)
+- Add model loading for real-time visual evaluation (set this up)
+- Find "unlearned' features
+- Collect data and start preparing for (and implementing) unsupervised pretraining of encoder + decoder on English + Python, respectively.
+- Clean data (e.g. replace spaces with tabs) to reduce failure modes
+- Consider moving to word/token-level
+
+Some Thoughts:
+- Ask about better inference output than training output
+- Ask about output improving despite no difference in loss
+- Ask about very low validation loss
+- Consider the few-to-many data problem: might not be encountered in other seq2seq tasks, could the distribution be skewed? Could try different types of truncation (see prev note), e.g. 2 descriptions, all (60+ code solutions) vs. 5 descriptions, 5 code solutions vs. 3 descriptions, 8 code solutions...
 
 Older Notes:
 - use masking + bucketing for batches to do truncated backpropseq
+- Try copy task on sequences with same distribution as descriptions or code and use the same truncated backprop method
+- Add proper "general" inference (that is, output sampling / prediction from arbitrary descriptions)
 
 Current Simplifications:
 - No duplicated thought vector
 - Limited data set
 - Single layer
+- No dropout, or any regularization
 - No bidirectional layers
 - No residual connections (through time or layers)
 - No attention
-- Small hidden state
+- Small/medium hidden state
 - Character-level
-- 50 step truncated backprop (?)
-- Little overlap between sequences ('sparse data')
+X 50 step truncated backprop
+X Little overlap between sequences ('sparse data')
 - No pretraining as a language model (encoder + decoder)
 - No character-level CNN on inputs
+- No layer normalization?
+
+Should perhaps first expect the model to get variable/function/class naming and input/output types correct (i.e. they should match the description)---learning correct algorithms will likely be the the most difficult part.
