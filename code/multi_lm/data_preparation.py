@@ -1,4 +1,21 @@
-""""""
+"""
+Tools for preparaing natural language datasets---currently 
+assumes a fixed set of datasets (see code).
+
+Classes:
+
+    TextClassification, TextCleaner, TextProcessor, 
+    DataHandler, DataCrawler
+
+Usage:
+
+    $ python data_preparation.py
+
+                or
+
+    >>> data_crawler = DataCrawler(root_path)
+    >>> data_crawler.crawl(process=True)
+"""
 
 import os
 import re
@@ -20,12 +37,13 @@ if not os.path.exists(BASE_DIR):
 class TextClassification:
 
     def __init__(self, language_type, language, domains=[], 
-                 folder_name=None, corpus_name=None):
+                 folder_name=None, directory_path=None, corpus_name=None):
         self.language_type = language_type
         self.language = language
         self.domains = []
         self.classification = [self.language_type, self.language] + self.domains
         self.folder_name = folder_name
+        self.directory_path = directory_path
         self.corpus_name = corpus_name
 
     @classmethod
@@ -53,6 +71,8 @@ class TextClassification:
                                      folder_name=domain2, corpus_name=domain2)
         else:
             raise NotImplementedError("Unsupported language type (or a typo)!")
+
+        classification.directory_path = directory_path
 
         return classification
 
@@ -615,15 +635,16 @@ class DataCrawler:
     def __init__(self, root_path):
         self.root_path = root_path
 
-    def process(self):
+    def crawl(self, process=False, crawl_processed=False):
+        text_classifications = []
         for directory_path, directory_names, file_names in os.walk(self.root_path):
-            if "\\processed\\" in directory_path:
+            if ((crawl_processed and "\\processed\\" not in directory_path) 
+                    or (not crawl_processed and "\\processed\\" in directory_path)):
                 continue
             try:
                 classification = TextClassification.from_path(directory_path)
             except NotImplementedError as e:
                 print(str(e))
-                pass
             if classification is not None:
                 if ((classification.language_type == NATURAL_LANGUAGE 
                         and not directory_names 
@@ -637,10 +658,14 @@ class DataCrawler:
                              or "character" not in directory_path)) 
                         or classification.language_type != NATURAL_LANGUAGE
                         ):
-                    data_handler = DataHandler(classification, directory_path)
-                    data_handler.process()
+                    text_classifications.append(classification)
+                    if process:
+                        data_handler = DataHandler(classification, directory_path)
+                        data_handler.process()
+
+        return text_classifications
 
 
 if __name__ == '__main__':
     data_crawler = DataCrawler(BASE_DIR)
-    data_crawler.process()
+    data_crawler.crawl(process=True)
