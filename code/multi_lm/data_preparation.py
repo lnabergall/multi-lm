@@ -19,8 +19,8 @@ Usage:
 
 import os
 import re
-import tarfile
-import io
+from collections import OrderedDict
+from copy import deepcopy
 from time import time
 
 from bs4 import UnicodeDammit
@@ -29,7 +29,7 @@ import utilities as utils
 
 
 BASE_DIR = "\\\\?\\" + os.path.join(os.path.join(
-    os.path.abspath(os.pardir), "data"), "language_modeling")
+    os.path.abspath("..\\.."), "data"), "language_modeling")
 if not os.path.exists(BASE_DIR):
     raise NotImplementedError("Can't work from current directory!")
 
@@ -40,30 +40,47 @@ class TextClassification:
                  folder_name=None, directory_path=None, corpus_name=None):
         self.language_type = language_type
         self.language = language
-        self.domains = []
+        self.domains = list(domains)
         self.classification = [self.language_type, self.language] + self.domains
         self.folder_name = folder_name
         self.directory_path = directory_path
         self.corpus_name = corpus_name
 
+    def __repr__(self):
+        return "<TextClassification({})>".format(self.classification)
+
+    def __eq__(self, other):
+        return (self.classification == other.classification 
+                and self.corpus_name == other.corpus_name)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __iter__(self):
+        return self.classification.__iter__()
+
+    def __len__(self):
+        return len(self.classification)
+
     @classmethod
     def from_path(cls, directory_path):
+        directories = directory_path.split("\\")
         if NATURAL_LANGUAGE in directory_path:
             classifications = get_defined_classifications(NATURAL_LANGUAGE)
-            classifications = [classification for classification in classification 
-                if "\\" + classification.folder_name + "\\" in directory_path]
+            classifications = [classification for classification in classifications 
+                if "\\" + classification.folder_name in directory_path]
             if not classifications:
                 classification = None
             else:
-                classification = classifications[0] 
+                classification = deepcopy(classifications[0])
         elif PROGRAMMING_LANGUAGE in directory_path:
             language_type_index = utils.get_folder_index(
                 directory_path, PROGRAMMING_LANGUAGE)
-            language_type = directory_path[language_type_index]
+            language_type = directories[language_type_index]
             try:
-                language = directory_path[language_type_index+1]
-                domain1 = directory_path[language_type_index+2]  # software category
-                domain2 = directory_path[language_type_index+3]  # library
+                language = directories[language_type_index+1]
+                domain1 = directories[language_type_index+2]  # software category
+                domain2 = directories[language_type_index+3]  # library
             except IndexError:
                 classification = None
             else:
@@ -72,9 +89,35 @@ class TextClassification:
         else:
             raise NotImplementedError("Unsupported language type (or a typo)!")
 
-        classification.directory_path = directory_path
+        processed_index = utils.get_folder_index(directory_path, "processed")
+        classification.append(
+            [directory for i, directory in enumerate(directories) 
+             if i > processed_index and directory not in classification])
+
+        if classification is not None:
+            classification.directory_path = directory_path
 
         return classification
+
+    def append(self, domains):
+        self.domains.extend(domains)
+        self.classification.extend(domains)
+
+    @staticmethod
+    def filter(classifications):
+        classifications.sort(
+            key=lambda classification: len(classification))
+        filtered_classifications = []
+        for classification1 in classifications:
+            for classification2 in filtered_classifications[:]:
+                if (classification1 == classification2 
+                        or set(classification1.classification) 
+                        <= set(classification2.classification)):
+                    break
+            else:
+                filtered_classifications.append(classification1)
+
+        return filtered_classifications
 
 
 def get_defined_classifications(language_type=None):
@@ -167,9 +210,6 @@ LEIDEN_WEIBO_CORPUS = TextClassification(
     folder_name="leiden_weibo_corpus-messages", corpus_name="leiden weibo corpus")
 
 
-DOCUMENT_SEPARATOR = "\n\n<document_separator>\n\n"
-
-
 class TextCleaner:
 
     whitespace_regexes = [
@@ -183,18 +223,23 @@ class TextCleaner:
     markup_tags_regex = re.compile(r"<.*?>")
     sound_regex = re.compile(r"\[.*?\]")
     docstring_regexes = {
-        PYTHON: (re.compile(r"^\s*?\"\"\".*?\"\"\"\s*?\n?"), 
-                   re.compile(r"^\s*?\'\'\'.*?\'\'\'\s*?\n?")),
-        C: (re.compile(r"^\s*?/\*[^*]*\*+(?:[^/*][^*]*\*+)*/\s*?\n?"),),
+        PYTHON: (re.compile(r"^\s*?\"\"\".*?\"\"\"\s*?\n?", 
+                            flags=re.MULTILINE|re.DOTALL), 
+                   re.compile(r"^\s*?\'\'\'.*?\'\'\'\s*?\n?", 
+                              flags=re.MULTILINE|re.DOTALL)),
+        C: (re.compile(r"^\s*?/\*[^*]*\*+(?:[^/*][^*]*\*+)*/\s*?\n?", 
+                       flags=re.MULTILINE|re.DOTALL),),
         FORTRAN: (),
         LISP: (),
     }
     comment_regexes = {
-        PYTHON: (re.compile(r"^\s*?#.*?\n"),),
-        C: (re.compile(r"^\s*?//.*?\n"),),
-        FORTRAN: (re.compile(r"^[\*cCdD]\s.*?\n"), re.compile(r"^\s*?!.*?\n"),),
-        LISP: (re.compile(r"^\s*?;.*?\n"), 
-                 re.compile(r"^\s*?#\|(?:(?!#\|).)*?\|#\s*?\n?")),
+        PYTHON: (re.compile(r"^\s*?#.*?\n", flags=re.MULTILINE),),
+        C: (re.compile(r"^\s*?//.*?\n", flags=re.MULTILINE),),
+        FORTRAN: (re.compile(r"^[\*cCdD]\s.*?\n", flags=re.MULTILINE), 
+                  re.compile(r"^\s*?!.*?\n", flags=re.MULTILINE)),
+        LISP: (re.compile(r"^\s*?;.*?\n", flags=re.MULTILINE), 
+                 re.compile(r"^\s*?#\|(?:(?!#\|).)*?\|#\s*?\n?", 
+                            flags=re.MULTILINE|re.DOTALL)),
     }
     spell_correct_map = utils.get_spell_corrector()
 
@@ -206,25 +251,25 @@ class TextCleaner:
         if self.classification in [BROWN_CORPUS]:
             document = self.remove_pos_tags(document)
         if self.classification in [GUTENBERG]:
-            document = image_tag_regex.sub("", document)
+            document = self.image_tag_regex.sub("", document)
         if self.classification in [ORAL_NARRATIVE_CORPUS, PAROLE_CORPUS]:
             document = self.remove_markup(document, all_tags=True)
         if self.classification == ORAL_NARRATIVE_CORPUS:
-            document = sound_regex.sub("", document)  # Remove sound annotation
+            document = self.sound_regex.sub("", document)  # Remove sound annotation
         if self.classification.language == CHINESE:
-            document = self.convert_chinese_punctuation(document)
+            document = self.convert_punctuation(document)
 
         if self.classification.language_type == NATURAL_LANGUAGE:
-            document = self.remove_markup(document)
+            document = self.remove_excess_whitespace(self.remove_markup(document))
         if self.classification.language_type == PROGRAMMING_LANGUAGE:
             document = self.convert_spaces_to_tabs(
                 self.remove_multiline_comments(document))
 
-        return self.remove_excess_whitespace(document)
+        return document
 
     def remove_excess_whitespace(self, text):
         text = text.strip()
-        for i, regex in enumerate(whitespace_regexes):
+        for i, regex in enumerate(self.whitespace_regexes):
             if i == 0:
                 text = regex.sub("\n\n", text)
             elif i == 5:
@@ -232,7 +277,7 @@ class TextCleaner:
             else:
                 text = regex.sub("", text)
         if self.classification == ORAL_NARRATIVE_CORPUS:
-            text = extra_whitespace_regex.sub(" ", text_cleaned)
+            text = self.extra_whitespace_regex.sub(" ", text)
 
         return text
 
@@ -241,7 +286,7 @@ class TextCleaner:
         text = text.replace("<h>", "").replace("</h>", "")
         text = text.replace("[Illustration]", "")
         if all_tags:
-            text = markup_tags_regex.sub("", text)
+            text = self.markup_tags_regex.sub("", text)
         return text
 
     def remove_pos_tags(self, text):
@@ -271,28 +316,27 @@ class TextCleaner:
         return text
 
     def correct_spelling(self, natural_text):
-        return utils.correct_spelling(spell_correct_map, natural_text)
+        return utils.correct_spelling(self.spell_correct_map, natural_text)
 
     def remove_multiline_comments(self, code_text):
         text = code_text
-        if self.language == PYTHON:
-            for regex in docstring_regexes[PYTHON]:
-                text = regex.sub("", text, flags=re.MULTILINE|re.DOTALL)
-            text = comment_regexes[PYTHON][0].sub("", text, flags=re.MULTILINE)
-        elif self.language == C:
-            text = docstring_regexes[C][0].sub("", text, flags=re.MULTILINE|re.DOTALL)
-            text = comment_regexes[C][0].sub("", text, flags=re.MULTILINE)
-        elif self.language == FORTRAN:
-            for regex in comment_regexes[FORTRAN]:
-                text = regex.sub("", text, flags=re.MULTILINE)
-        elif self.language == LISP:
+        if self.classification.language == PYTHON:
+            for regex in self.docstring_regexes[PYTHON]:
+                text = regex.sub("", text)
+            text = self.comment_regexes[PYTHON][0].sub("", text)
+        elif self.classification.language == C:
+            text = self.docstring_regexes[C][0].sub("", text)
+            text = self.comment_regexes[C][0].sub("", text)
+        elif self.classification.language == FORTRAN:
+            for regex in self.comment_regexes[FORTRAN]:
+                text = regex.sub("", text)
+        elif self.classification.language == LISP:
             # Note: doesn't remove 'docstrings'
-            text = comment_regexes[LISP][0].sub("", text, flags=re.MULTILINE)
+            text = self.comment_regexes[LISP][0].sub("", text)
             text_prev = ""
             while text != text_prev:
                 text_prev = text
-                text = comment_regexes[LISP][1].sub(
-                    "", text, flags=re.MULTILINE|re.DOTALL)
+                text = self.comment_regexes[LISP][1].sub("", text)
         else:
             raise NotImplementedError("Can't remove comments for "
                                       "source code in that language!")
@@ -300,7 +344,7 @@ class TextCleaner:
         return text
 
     def convert_spaces_to_tabs(self, code_text):
-        return re.sub(spaces_to_tabs_regex, "\t", code_text)
+        return re.sub(self.spaces_to_tabs_regex, "\t", code_text)
 
 
 class TextProcessor:
@@ -330,12 +374,14 @@ class TextProcessor:
 
         if clean:
             if not documents:
-                text = self.cleaner.clean(document)
+                text = self.cleaner.clean(text)
             if isinstance(documents, list):
                 for i, document in enumerate(documents):
                     documents[i] = self.cleaner.clean(document)
             elif isinstance(documents, dict):
                 for key in documents:
+                    if isinstance(documents[key], str):
+                        documents[key] = [documents[key]]
                     for i, document in enumerate(documents[key]):
                         documents[key][i] = self.cleaner.clean(document)
             else:
@@ -357,7 +403,12 @@ class TextProcessor:
                 print("Completed processing", i, "reviews...")
             if not line.strip():
                 continue
-            review_dict = eval(line)
+            try:
+                review_dict = eval(line)
+            except SyntaxError:
+                print("Looks like a review fragment at line", i, 
+                      "out of", text.count("\n"), "lines")
+                continue
             if by_user:
                 prev_reviews = reviews.get(review_dict["reviewerID"], [])
                 reviews[review_dict["reviewerID"]] = (
@@ -381,6 +432,11 @@ class TextProcessor:
         return blogs
 
     def extract_wiki_articles(self, text):
+        footnote_regex = re.compile(
+            r"<h>\s*(see also|voir aussi|siehe auch|\\u53c2\\u89c1|note"
+            + r"|reference|bibliograph|literatur|einzelnachweise"
+            + r"|\\u53c2\\u8003\\u8457\\u4f5c|\\u76f8\\u95dc)\s*</h>", 
+            flags=re.IGNORECASE)
         articles = text.split("</article>")
         article_by_name = {}
         for i, article in enumerate(articles):
@@ -399,10 +455,7 @@ class TextProcessor:
             article_cleaned = re.sub(r"<article name=\"(.+?)\">", "", article)
 
             # Remove 'footnote' material: notes, references, bibliography, etc.
-            regex = (r"<h>\s*(see also|voir aussi|siehe auch|\\u53c2\\u89c1|note"
-                     + r"|reference|bibliograph|literatur|einzelnachweise"
-                     + r"|\\u53c2\\u8003\\u8457\\u4f5c|\\u76f8\\u95dc)\s*</h>")
-            article_cleaned = re.split(regex, article_cleaned, flags=re.IGNORECASE)[0]
+            article_cleaned = footnote_regex.split(article_cleaned)[0]
 
             article_by_name[name] = (name + "\n\n" + article_cleaned)
 
@@ -463,7 +516,7 @@ class TextProcessor:
 
         return messages
 
-    def get_brown_corpus_categories(category_text):
+    def get_brown_corpus_categories(self, category_text):
         ids_by_category = {}
         for line in category_text.split("\n"):
             if line.strip():
@@ -490,6 +543,8 @@ class TextProcessor:
         return domains[0]
 
     def get_document_identifier(self, file_name):
+        if self.classification == AMAZON_REVIEWS:
+            return " ".join(file_name.split("_")[:-1]).lower()
         if self.classification == BLOG_CORPUS:
             return file_name.split(".")[0]  # string
         elif self.classification == GUTENBERG:
@@ -532,34 +587,53 @@ class DataHandler:
     def process(self):
         self.get_file_names()
         for file_name in self.file_names:
-            texts = self.retrieve_texts(file_name)
+            file_path = os.path.join(self.root_path, file_name)
+            if utils.is_excessively_large(file_path):
+                encoding = utils.get_encoding(file_path)
+                file_object = open(file_path, encoding=encoding)
+            else:
+                file_object = None
+            texts = self.retrieve_texts(file_path, file_object)
             for text in texts:
-                output_file_path = self.make_output_file_path(file_name, text)
                 documents = self.text_processor.process(text, clean=True)
+                store_in_tar = (isinstance(documents, list) 
+                                or isinstance(documents, dict))
+                output_file_path = self.make_output_file_path(
+                    file_name, text, store_in_tar)
                 self.store_documents(documents, output_file_path)
+            if file_object is not None:
+                file_object.close()
 
     def get_file_names(self):
-        extensions = [".txt", ".json", ".xml", "-stripped.html", "sgm"]
+        extensions = ([".txt", ".json", ".xml", "-stripped.html", "sgm"] 
+                      if self.classification != BROWN_CORPUS 
+                      and self.classification.language_type != PROGRAMMING_LANGUAGE 
+                      else None)
         self.file_names = utils.get_files_from_directory(
             self.root_path, extensions=extensions)
-        self.file_names = [file_name for file_name in file_name 
+        self.file_names = [file_name for file_name in self.file_names 
             if not utils.remove_extension(file_name).endswith("_processed")]
         if WIKIPEDIA in self.classification.domains:
             self.file_names = [file_name for file_name in self.file_names 
-                               if "corpus-processed.txt" in file_name]
+                               if "corpus.txt" in file_name]
         if self.classification == BROWN_CORPUS:
             self.file_names = [file_name for file_name in self.file_names
                                if re.fullmatch(r"[a-zA-Z]{2}[0-9]{2}", file_name)]
         if self.classification.language_type == PROGRAMMING_LANGUAGE:
-            self.file_names = [file_name for file_name in file_name 
+            self.file_names = [file_name for file_name in self.file_names 
                 if (utils.detect_language(file_name, source_code=True) 
                     == self.classification.language)]
 
-    def retrieve_texts(file_name):
-        for text in utils.open_file(os.path.join(self.root_path, file_name)):
-            yield UnicodeDammit(text).unicode_markup()
+    def retrieve_texts(self, file_path=None, file_object=None):
+        text_stream = utils.open_file(
+            file_path=file_path, file_object=file_object)
+        if isinstance(text_stream, str):
+            yield UnicodeDammit(text_stream).unicode_markup
+        else:
+            for text in text_stream:
+                yield UnicodeDammit(text).unicode_markup
 
-    def make_output_file_path(self, file_name, text):
+    def make_output_file_path(self, file_name, text, store_in_tar):
         # Make folder path
         directories = self.root_path.split("\\")
         try:
@@ -568,13 +642,18 @@ class DataHandler:
         except IndexError:
             raise RuntimeError("Unexpected file path names!")
 
-        file_path = "\\".join(
+        filtered_directories = [
             directory for i, directory in enumerate(directories) 
-            if i >= base_index and directory in self.classification.classification)
+            if i <= base_index or directory in self.classification 
+            or directory == self.classification.folder_name]
+        file_path = "\\".join(filtered_directories[:4] 
+                              + list(OrderedDict.fromkeys(filtered_directories[4:])))
         file_path = os.path.join(file_path, "processed")
         for domain in self.classification.domains:
-            if "\\" + domain + "\\" not in file_path:
+            if "\\" + domain not in file_path:
                 file_path = os.path.join(file_path, domain)
+        if self.classification == PAROLE_CORPUS and file_path.endswith("processed"):
+            file_path = os.path.join(file_path, directories[base_index+6])
 
         # Make file name
         document_identifier = self.text_processor.get_document_identifier(file_name)
@@ -586,7 +665,11 @@ class DataHandler:
             document_identifier = document_identifier[0]
         else:
             file_name_root = file_name[:extension_index]
-        output_file_name = file_name_root + "_processed" + file_name[extension_index:]
+        output_file_name = file_name_root + "_processed"
+        if store_in_tar:
+            output_file_name += ".tar"
+        else:
+            output_file_name += ".txt"
 
         # Add additional domain info
         if document_identifier and self.classification != BLOG_CORPUS:
@@ -595,7 +678,7 @@ class DataHandler:
             if self.classification == BROWN_CORPUS:
                 categories_text = utils.open_file(
                     os.path.join(self.root_path, "cats.txt"))
-                categories = invert_mapping(
+                categories = utils.invert_mapping(
                     self.text_processor.get_brown_corpus_categories(categories_text))
                 file_path_suffix = categories[file_name][0]
             elif self.classification == ABU_CORPUS:
@@ -618,16 +701,26 @@ class DataHandler:
         if isinstance(documents, str):
             utils.store_text(documents, output_file_path)
         elif isinstance(documents, list):
-            utils.store_text(DOCUMENT_SEPARATOR.join(documents), output_file_path)
+            # Store documents in a tar file by index
+            output_data = {}
+            for i, document in enumerate(documents):
+                file_name = str(i) + ".txt"
+                output_data[file_name] = document
+            utils.store_tarfile_data(output_data, output_file_path)
         elif isinstance(documents, dict):
             # Store values in a tar file by key
             output_data = {}
             for key, value in documents.items():
-                file_name = key + ".txt"
                 if isinstance(value, list):
-                    text = DOCUMENT_SEPARATOR.join(value)
-                output_data[file_name] = text
-            utils.store_tarfile(output_data, output_file_path)
+                    # Store in a folder in tar file by index
+                    for i, text in enumerate(value):
+                        file_name = os.path.join(key, str(i) + ".txt")
+                        output_data[file_name] = text
+                else:
+                    file_name = key + ".txt"
+                    text = value
+                    output_data[file_name] = text
+            utils.store_tarfile_data(output_data, output_file_path)
 
 
 class DataCrawler:
@@ -635,37 +728,47 @@ class DataCrawler:
     def __init__(self, root_path):
         self.root_path = root_path
 
-    def crawl(self, process=False, crawl_processed=False):
+    def crawl(self, process=False, crawl_processed=False, skip=[], include_only=[]):
         text_classifications = []
-        for directory_path, directory_names, file_names in os.walk(self.root_path):
-            if ((crawl_processed and "\\processed\\" not in directory_path) 
-                    or (not crawl_processed and "\\processed\\" in directory_path)):
+        for directory_path, directory_names, _ in os.walk(self.root_path):
+            if ((crawl_processed and "\\processed" not in directory_path) 
+                    or (not crawl_processed and "\\processed" in directory_path)):
                 continue
             try:
                 classification = TextClassification.from_path(directory_path)
             except NotImplementedError as e:
+                classification = None
                 print(str(e))
             if classification is not None:
-                if ((classification.language_type == NATURAL_LANGUAGE 
+                if (classification not in skip
+                        and (not include_only or classification in include_only)
                         and not directory_names 
-                        and (classification != CHAMBERS_ROSTAND_CORPUS 
-                             or "Plain text" not in directory_path)
-                        and (classification != ORAL_NARRATIVE_CORPUS 
-                             or "HTML" not in directory_path)
-                        and (classification != GERMANC 
-                             or "RAW" not in directory_path)
-                        and (classification != LANCASTER_CORPUS 
-                             or "character" not in directory_path)) 
+                        and ((classification.language_type == NATURAL_LANGUAGE
+                              and not crawl_processed 
+                              and (classification != CHAMBERS_ROSTAND_CORPUS 
+                                  or "Plain text" in directory_path)
+                              and (classification != ORAL_NARRATIVE_CORPUS 
+                                  or "HTML" in directory_path)
+                              and (classification != GERMANC 
+                                  or "RAW" in directory_path)
+                              and (classification != LANCASTER_CORPUS 
+                                  or "character" in directory_path)) 
                         or classification.language_type != NATURAL_LANGUAGE
-                        ):
+                        or crawl_processed)):
                     text_classifications.append(classification)
                     if process:
+                        if (len(text_classifications) > 1 and 
+                                text_classifications[-2].corpus_name 
+                                != text_classifications[-1].corpus_name):
+                            print("\nProcessing " + classification.corpus_name)
                         data_handler = DataHandler(classification, directory_path)
                         data_handler.process()
 
-        return text_classifications
+        return TextClassification.filter(text_classifications)
 
 
 if __name__ == '__main__':
+    start_time = time()
     data_crawler = DataCrawler(BASE_DIR)
     data_crawler.crawl(process=True)
+    print("Processing duration:", time() - start_time)
