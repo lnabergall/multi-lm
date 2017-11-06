@@ -28,8 +28,8 @@ from bs4 import UnicodeDammit
 import utilities as utils
 
 
-BASE_DIR = "\\\\?\\" + os.path.join(os.path.join(
-    os.path.abspath("..\\.."), "data"), "language_modeling")
+BASE_DIR = "\\\\?\\" + os.path.join(
+    os.path.abspath("..\\.."), "data", "language_modeling")
 if not os.path.exists(BASE_DIR):
     raise NotImplementedError("Can't work from current directory!")
 
@@ -89,10 +89,13 @@ class TextClassification:
         else:
             raise NotImplementedError("Unsupported language type (or a typo)!")
 
-        processed_index = utils.get_folder_index(directory_path, "processed")
-        classification.append(
-            [directory for i, directory in enumerate(directories) 
-             if i > processed_index and directory not in classification])
+        try:
+            processed_index = utils.get_folder_index(directory_path, "processed")
+            classification.append(
+                [directory for i, directory in enumerate(directories) 
+                 if i > processed_index and directory not in classification])
+        except ValueError:
+            pass
 
         if classification is not None:
             classification.directory_path = directory_path
@@ -596,10 +599,10 @@ class DataHandler:
             texts = self.retrieve_texts(file_path, file_object)
             for text in texts:
                 documents = self.text_processor.process(text, clean=True)
-                store_in_tar = (isinstance(documents, list) 
+                store_in_zip = (isinstance(documents, list) 
                                 or isinstance(documents, dict))
                 output_file_path = self.make_output_file_path(
-                    file_name, text, store_in_tar)
+                    file_name, text, store_in_zip)
                 self.store_documents(documents, output_file_path)
             if file_object is not None:
                 file_object.close()
@@ -633,7 +636,7 @@ class DataHandler:
             for text in text_stream:
                 yield UnicodeDammit(text).unicode_markup
 
-    def make_output_file_path(self, file_name, text, store_in_tar):
+    def make_output_file_path(self, file_name, text, store_in_zip):
         # Make folder path
         directories = self.root_path.split("\\")
         try:
@@ -666,8 +669,8 @@ class DataHandler:
         else:
             file_name_root = file_name[:extension_index]
         output_file_name = file_name_root + "_processed"
-        if store_in_tar:
-            output_file_name += ".tar"
+        if store_in_zip:
+            output_file_name += ".zip"
         else:
             output_file_name += ".txt"
 
@@ -701,18 +704,18 @@ class DataHandler:
         if isinstance(documents, str):
             utils.store_text(documents, output_file_path)
         elif isinstance(documents, list):
-            # Store documents in a tar file by index
+            # Store documents in a zip file by index
             output_data = {}
             for i, document in enumerate(documents):
                 file_name = str(i) + ".txt"
                 output_data[file_name] = document
-            utils.store_tarfile_data(output_data, output_file_path)
+            utils.store_zipfile_data(output_data, output_file_path)
         elif isinstance(documents, dict):
-            # Store values in a tar file by key
+            # Store values in a zip file by key
             output_data = {}
             for key, value in documents.items():
                 if isinstance(value, list):
-                    # Store in a folder in tar file by index
+                    # Store in a folder in zip file by index
                     for i, text in enumerate(value):
                         file_name = os.path.join(key, str(i) + ".txt")
                         output_data[file_name] = text
@@ -720,7 +723,7 @@ class DataHandler:
                     file_name = key + ".txt"
                     text = value
                     output_data[file_name] = text
-            utils.store_tarfile_data(output_data, output_file_path)
+            utils.store_zipfile_data(output_data, output_file_path)
 
 
 class DataCrawler:
@@ -770,5 +773,5 @@ class DataCrawler:
 if __name__ == '__main__':
     start_time = time()
     data_crawler = DataCrawler(BASE_DIR)
-    data_crawler.crawl(process=True)
+    data_crawler.crawl(process=True, include_only=[LANCASTER_CORPUS])
     print("Processing duration:", time() - start_time)
