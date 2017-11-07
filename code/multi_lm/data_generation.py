@@ -128,12 +128,13 @@ class DatasetConfiguration:
         Args:
             name: String, name of this dataset configuration.
             category_config: List of 2-tuples of the form 
-                (domain, subcategory_count, partition_type), where 
-                domain is a string, subcategory_count is an integer 
-                representing the number of subcategories to sample, and
+                (domain, subcategory_count, partition_type, document_language), 
+                where domain is a string, subcategory_count is an integer 
+                representing the number of subcategories to sample, 
                 partition_type is either 'training', 'validation', 'test', 
                 'split', 'split_as_one', 'top_domain', 'bottom_domain', 
-                or 'document'.
+                or 'document', and document_language is either None or 
+                a language. 
             sampling_method: String, either 'truncate' or 'equalize'.
             vocab_type: String, either 'token', 'subtoken', or 'character'.
             vocab_size: Integer, defaults to None.
@@ -188,10 +189,12 @@ class DatasetConfiguration:
     def sample(self, root_category, sample_largest=True):
         categories = root_category.all_categories
         determined_category_config = []
-        for domain, subcategory_count, partition_type in self.category_config:
+        for (domain, subcategory_count, 
+                partition_type, document_language) in self.category_config:
             if subcategory_count < 1:
                 determined_category_config.append(
-                    (domain, subcategory_count, partition_type))
+                    (domain, subcategory_count, 
+                     partition_type, document_language))
             try:
                 category = [category for category in categories 
                             if category.category == domain][0]
@@ -211,7 +214,7 @@ class DatasetConfiguration:
                         [subcategory.category for subcategory 
                          in category.subcategories], subcategory_count)
                 determined_category_config.extend(
-                    [(category, 0, partition_type) 
+                    [(category, 0, partition_type, document_language) 
                      for category in sampled_categories])
 
         self.category_config = determined_category_config
@@ -318,9 +321,13 @@ class DatasetConfiguration:
                     self.vocab_file_name)
                 encoder = CustomSubwordTextEncoder(vocab_file_path)
             else:
-                encoder = CustomSubwordTextEncoder()
-                encoder.build_from_token_counts(
-                    self.vocabulary, self.vocab_min_count)
+                if self.vocab_size is not None:
+                    encoder = CustomSubwordTextEncoder.build_to_target_size(
+                        self.vocab_size, self.vocabulary, 3, 50)
+                else:
+                    encoder = CustomSubwordTextEncoder()
+                    encoder.build_from_token_counts(
+                        self.vocabulary, self.vocab_min_count)
                 vocab_file_name = utils.add_filename_suffix(
                     self.file_path, "_vocab_subtoken." + str(encoder.vocab_size)) 
                 encoder.store_to_file(vocab_file_name)
@@ -395,7 +402,7 @@ class Category:
     def dataset_categories(self):
         all_categories = self.all_categories
         dataset_categories = []
-        for domain, _, _ in self.dataset_config.category_config:
+        for domain, _, _, _ in self.dataset_config.category_config:
             try:
                 category = [category for category in all_categories 
                             if category.category == domain][0]
@@ -625,23 +632,35 @@ class Category:
 
     def partition(self, training=0.8, validation=0.1, test=0.1):
         all_categories = self.all_categories
-        for domain, _, partition_type in self.dataset_config.category_config:
+        category_config = self.dataset_config.category_config
+        for domain, _, partition_type, document_language in category_config:
             category = [category for category in all_categories 
                         if category.category == domain][0]
             if partition_type in ["training", "validation", "test"]:
                 for document in category.all_documents:
-                    document.dataset_assigned = partition_type
+                    if (document_language is None 
+                            or document.classification.language == document_language):
+                        document.dataset_assigned = partition_type
             elif partition_type == "split_as_one":
-                Document.partition(category.all_documents, 
-                                   training, validation, test)
+                Document.partition(
+                    [document for document in category.all_documents 
+                     if document_language is None 
+                     or document.classification.language == document_language], 
+                    training, validation, test)
             else:
                 split_subcategories = category.get_subcategories(partition_type)
                 if partition_type == "document":
                     for category in split_subcategories:
-                        Document.partition(category.documents)
+                        Document.partition(
+                            [document for document in category.documents 
+                             if document_language is None 
+                             or document.classification.language == document_language])
                 else:
                     Document.partition(
-                        [category.documents for category in split_subcategories])
+                        [[document for document in category.documents 
+                          if document_language is None 
+                          or document.classification.language == document_language] 
+                         for category in split_subcategories])
 
     def sample(self, sampling_method=None, 
                required_tokens=None, force_equalize=None):
@@ -751,7 +770,8 @@ class Document:
             self.file_name, self.classification)
 
     @classmethod
-    def bulk_load(cls, data_type, documents, file_path=None):
+    def bulk_load(cls, data_type, documents, file_path=None, 
+                  page_count=None, page=None):
         if file_path is None:
             # Assumes all documents in same zip file
             if data_type == "text":
@@ -761,11 +781,17 @@ class Document:
         with ZipFile(file_path, "r") as zip_file:
             if data_type == "text":
                 file_names = [document.file_name for document in documents]
+                if page_count:
+                    file_names = file_names[(page-1)*len(file_names)//page_count
+                                            :page*len(file_names)//page_count]
                 document_data = [str(zip_file.read(file_name)) 
                                  for file_name in file_names]
             elif data_type == "token":
                 file_names = [document.get_token_file_info()[0] 
                               for document in documents]
+                if page_count:
+                    file_names = file_names[(page-1)*len(file_names)//page_count
+                                            :page*len(file_names)//page_count]
                 document_data = [str(zip_file.read(file_name)).split(TOKEN_SEPARATOR)
                                  for file_name in file_names]
             else:
@@ -780,17 +806,15 @@ class Document:
             if os.path.exists(document_list[0].get_token_file_info()[1]):
                 continue  # Skip if token zip file found
             print("\nTokenizing:", file_path)
-            document_texts = cls.bulk_load("text", document_list, file_path)
-            # To deal with spacy string size limit (2**30)
-            text_lists = utils.split(document_texts, 80)
-            first_document_index = 0
-            for i, texts in enumerate(text_lists):
-                print(str(i) + "/" + str(80) + "...")
-                concatenated_text = (" " + DOCUMENT_SEPARATOR + " ").join(texts)
+            for i in range(60):
+                print(str(i+1) + "/60...")
+                document_texts = cls.bulk_load("text", document_list, file_path, 
+                                               page_count=60, page=i+1)
+                # To deal with spacy string size limit (2**30)
+                concatenated_text = (" " + DOCUMENT_SEPARATOR + " ").join(document_texts)
                 # Assumes all documents in zip file are same language
                 tokens = tokenize(concatenated_text, 
                                   document_list[0].classification.language, file_path)
-                del concatenated_text
                 document_tokens = [
                     list(token_sequence) for seperator, token_sequence 
                     in groupby(tokens, lambda element: element == DOCUMENT_SEPARATOR)
@@ -798,11 +822,10 @@ class Document:
                 token_data_dictionary = {}
                 for j, tokens in enumerate(document_tokens):
                     token_text = TOKEN_SEPARATOR.join(tokens)
-                    document = document_list[first_document_index+j]
+                    document = document_list[(i*len(document_list)//60)+j]
                     token_file_name, token_file_path = document.get_token_file_info()
                     token_data_dictionary[token_file_name] = token_text
                 utils.store_zipfile_data(token_data_dictionary, token_file_path)
-                first_document_index += len(document_tokens)
         with Pool(8) as pool:
             pool.map(tokenize_document, other_documents)
 
@@ -1017,20 +1040,8 @@ class MultiLmProblem(problem.Text2TextProblem):
             return self.document_graph.validation_generator()
 
 
-@registry.register_problem("multi_lm_gutenberg")
-class MultiLmGutenberg(MultiLmProblem):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.load_dataset("gutenberg_token100000_size50000000_config.txt")
-
-    @property 
-    def use_subword_tokenizer(self):
-        return False
-
-
 BILLION_BENCHMARK = data.TextClassification(
-    language_type=data.NATURAL_LANGUAGE, language=data.ENGLISH, domain=["news"], 
+    language_type=data.NATURAL_LANGUAGE, language=data.ENGLISH, domains=["news"], 
     folder_name="1-billion-word-language-modeling-benchmark",
     corpus_name="1 billion word benchmark dataset",
     directory_path=os.path.join(data.BASE_DIR, data.NATURAL_LANGUAGE, 
@@ -1038,14 +1049,77 @@ BILLION_BENCHMARK = data.TextClassification(
         "training-monolingual.tokenized.shuffled"))
 
 
-@registry.register_problem("multi_lm_1billion")
-class MultiLm1Billion(MultiLmProblem):
+@registry.register_problem("multi_lm_1billion_token_small")
+class MultiLm1BillionSmall(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.load_dataset("1billion_token100000_size50000000_config.txt",
+        super().__init__(*args, **kwargs) 
+        self.load_dataset("1billion_token100000_size30000000_config.txt",
                           classification=BILLION_BENCHMARK)
 
     @property 
     def use_subword_tokenizer(self):
         return False
+
+
+@registry.register_problem("multi_lm_1billion_subword_large")
+class MultiLm1BillionSmall(MultiLmProblem):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs) 
+        self.load_dataset("1billion_subword15000_size200000000_config.txt",
+                          classification=BILLION_BENCHMARK)
+
+    @property 
+    def use_subword_tokenizer(self):
+        return True
+
+
+@registry.register_problem("multi_lm_enwiki_token_small"):
+class MultiLmEnglishWikiToken:
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.load_dataset("englishwiki_token100000_size30000000_config.txt")
+        except FileNotFoundError:
+            setup_dataset("englishwiki", 
+                          [("wikipedia", 0, "split_as_one", data.ENGLISH)],
+                          vocab_size=100000, vocab_type="token", 
+                          total_token_count=30000000)
+            self.load_dataset("englishwiki_token100000_size_30000000_config.txt")
+
+    @property 
+    def use_subword_tokenizer(self):
+        return False
+
+
+@registry.register_problem("multi_lm_enwiki_subword_small"):
+class MultiLmEnglishWikiSubword:
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.load_dataset("englishwiki_subword5000_size30000000_config.txt")
+        except FileNotFoundError:
+            setup_dataset("englishwiki", 
+                          [("wikipedia", 0, "split_as_one", data.ENGLISH)],
+                          vocab_size=5000, vocab_type="subword", 
+                          total_token_count=30000000)
+            self.load_dataset("englishwiki_subword5000_size_30000000_config.txt")
+
+    @property 
+    def use_subword_tokenizer(self):
+        return True
+
+
+@registry.register_problem("multi_lm_enwiki_token_medium"):
+class MultiLmEnglishWikiSubword:
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.load_dataset("englishwiki_subword15000_size100000000_config.txt")
+
+    @property 
+    def use_subword_tokenizer(self):
+        return True
