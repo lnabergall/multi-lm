@@ -23,7 +23,7 @@ class LSTMLm(t2t_model.T2TModel):
         train = self._hparams.mode == tf.contrib.learn.ModeKeys.TRAIN
         with tf.variable_scope("lstm_lm"):
             # Flatten inputs.
-            inputs = common_layers.flatten4d3d(features["inputs"])
+            inputs = common_layers.flatten4d3d(features.get("inputs"))
             outputs, _ = lstm.lstm(tf.reverse(inputs, axis=[1]), 
                                    self._hparams, train, "lstm")
             return tf.expand_dims(outputs, axis=2)
@@ -102,11 +102,11 @@ def lstm_large():
 def attention_lm_tiny():
     """Set of hyperparameters for the attention network."""
     hparams = attention_lm.attention_lm_base()
-    hparams.batch_size = 2048
+    hparams.batch_size = 1024
+    hparams.hidden_size = 192
+    hparams.filter_size = 768
     hparams.num_hidden_layers = 1
-    hparams.hidden_size = 256
-    hparams.filter_size = 1024
-    hparams.layer_prepostprocess_dropout = 0.5
+    # hparams.layer_prepostprocess_dropout = 0.5
     # hparams.shared_embedding_and_softmax_weights = int(True)
     return hparams
 
