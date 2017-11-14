@@ -234,7 +234,7 @@ def get_encoding(file_path=None, file_object=None):
 
 
 def detect_language(file_path, text=None, source_code=False):
-    from data_preparation import PYTHON, C, FORTRAN, LISP   # For circular import
+    from .data_preparation import PYTHON, C, FORTRAN, LISP   # For circular import
     language = None
     file_path_lower = file_path.lower()
     if file_path_lower.endswith(".py") or file_path_lower.endswith(".pyw"):
@@ -267,7 +267,7 @@ def detect_language(file_path, text=None, source_code=False):
 
 
 def get_spell_corrector():
-    from data_preparation import BASE_DIR  # for circular import
+    from .data_preparation import BASE_DIR  # for circular import
     spell_correct_dict = {}
     with open(os.path.join(BASE_DIR, 
               "wikipedia_common_misspellings.txt"), "r") as spell_file:

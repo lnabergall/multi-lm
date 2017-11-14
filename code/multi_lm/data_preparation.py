@@ -25,7 +25,7 @@ from time import time
 
 from bs4 import UnicodeDammit
 
-import utilities as utils
+from . import utilities as utils
 
 
 BASE_DIR = "\\\\?\\" + os.path.join(
