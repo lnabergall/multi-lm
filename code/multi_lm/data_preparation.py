@@ -26,10 +26,12 @@ from time import time
 from bs4 import UnicodeDammit
 
 from . import utilities as utils
+    
 
 
 BASE_DIR = "\\\\?\\" + os.path.join(
     os.path.abspath("..\\.."), "data", "language_modeling")
+print(BASE_DIR)
 if not os.path.exists(BASE_DIR):
     raise NotImplementedError("Can't work from current directory!")
 

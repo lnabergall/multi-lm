@@ -224,6 +224,12 @@ def add_filename_suffix(file_path, suffix):
             + file_path[file_path.rfind("."):])
 
 
+def get_file_path(root_path, identifiers):
+    file_name = [file_name for file_name in os.listdir(root_path)
+                 if all(identifier in file_name for identifier in identifiers)][0]
+    return os.path.join(root_path, file_name)
+
+
 def get_encoding(file_path=None, file_object=None):
     if not file_object:
         with open(file_path, "rb") as file:
@@ -234,7 +240,7 @@ def get_encoding(file_path=None, file_object=None):
 
 
 def detect_language(file_path, text=None, source_code=False):
-    from .data_preparation import PYTHON, C, FORTRAN, LISP   # For circular import
+    from .data_preparation import PYTHON, C, FORTRAN, LISP  # For circular import
     language = None
     file_path_lower = file_path.lower()
     if file_path_lower.endswith(".py") or file_path_lower.endswith(".pyw"):

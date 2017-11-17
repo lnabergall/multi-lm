@@ -177,6 +177,7 @@ class DatasetConfiguration:
 
     @classmethod
     def from_file(cls, file_path):
+        root_directory = os.path.split(file_path)[0]
         dataset_description = utils.open_file(file_path)
         (name, category_config, sampling_method, vocab_type, vocab_size, 
          vocab_min_count, vocab_file_path, total_token_count) = tuple(
@@ -192,7 +193,7 @@ class DatasetConfiguration:
                 parameters[i] = int(parameter)
         return cls(name, category_config, sampling_method, vocab_type, 
                    parameters[0], parameters[1], vocab_file_path, 
-                   total_token_count=parameters[2])
+                   total_token_count=parameters[2], root_directory=root_directory)
 
     def sample(self, root_category, sample_largest=True):
         categories = root_category.all_categories
@@ -230,11 +231,8 @@ class DatasetConfiguration:
     @property
     def file_path(self):
         file_name = self.name.replace(" ", "_") + "_" + self.vocab_type
-        if self.vocab_type == "token":
-            file_name += (str(self.vocab_size) if self.vocab_size 
-                          else str(self.vocab_min_count))
-        elif self.vocab_type == "subtoken":
-            file_name += str(self.vocab_min_count)
+        file_name += (str(self.vocab_size) if self.vocab_size 
+                      else str(self.vocab_min_count))
         file_name += "_size" + str(self.total_token_count) + ".txt"
         file_path = os.path.join(self.root_directory or data.BASE_DIR, file_name)
 
@@ -301,6 +299,13 @@ class DatasetConfiguration:
         if self.vocab_file_path is None:
             self.vocab_file_path = utils.add_filename_suffix(
                 self.file_path, "_vocab")
+            if not os.path.exists(self.vocab_file_path):
+                try:
+                    self.vocab_file_path = utils.get_file_path(
+                        self.root_directory, 
+                        [self.name, str(self.total_token_count), "vocab_complete"])
+                except IndexError:
+                    raise RuntimeError("Vocabulary file not found!")
         if self.vocab_type in ["token", "subtoken"]:
             vocab_description = utils.open_file(self.vocab_file_path)
             self.vocabulary = Counter()
@@ -328,12 +333,12 @@ class DatasetConfiguration:
                 None, vocab_list=list(self.truncated_vocabulary.keys()), 
                 replace_oov=UNKNOWN_TOKEN)
         elif self.vocab_type == "subtoken":
-            if load_vocab:
+            if load_vocab and self.vocab_type in self.vocab_file_path:
                 encoder = CustomSubwordTextEncoder(self.vocab_file_path)
             else:
                 if self.vocab_size is not None:
                     encoder = CustomSubwordTextEncoder.build_to_target_size(
-                        self.vocab_size, self.vocabulary, 3, 50)
+                        self.vocab_size, self.vocabulary, 3, 100)
                 else:
                     encoder = CustomSubwordTextEncoder()
                     encoder.build_from_token_counts(
@@ -646,6 +651,15 @@ class Category:
     def load_partition(self):
         file_path = utils.add_filename_suffix(
             self.dataset_config.file_path, "_partition")
+        if not os.path.exists(file_path):
+            try:
+                file_path = utils.get_file_path(
+                    self.dataset_config.root_directory, 
+                    [self.dataset_config.name, 
+                     str(self.dataset_config.total_token_count), 
+                     "partition"])
+            except IndexError:
+                raise RuntimeError("Partition file not found!")
         partition_description = utils.open_file(file_path)
         documents = self.dataset_documents
         documents_by_file = {(document.file_path, document.file_name) : document
@@ -1205,7 +1219,7 @@ class MultiLmEnglishWikiSubword(MultiLmProblem):
                           [("wikipedia", 0, "split_as_one", data.ENGLISH)],
                           vocab_size=5000, vocab_type="subtoken", 
                           total_token_count=30000000, min_doc_length=20,
-                          max_doc_length=150)
+                          max_doc_length=200)
             self.load_dataset("englishwiki_subtoken5000_size30000000_config.txt")
 
     @property 
@@ -1213,7 +1227,7 @@ class MultiLmEnglishWikiSubword(MultiLmProblem):
         return True
 
 
-@registry.register_problem("multi_lm_enwiki_token_medium")
+@registry.register_problem("multi_lm_enwiki_subword_medium")
 class MultiLmEnglishWikiSubword(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
