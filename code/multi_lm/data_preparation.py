@@ -23,6 +23,8 @@ from collections import OrderedDict
 from copy import deepcopy
 from time import time
 
+import ftfy
+import textacy
 from bs4 import UnicodeDammit
 
 from . import utilities as utils
@@ -248,7 +250,7 @@ class TextCleaner:
     }
     spell_correct_map = utils.get_spell_corrector()
 
-    def __init__(self, classification):
+    def __init__(self, classification=None):
         self.classification = classification
 
     def clean(self, document, correct_spelling=False):
@@ -266,6 +268,7 @@ class TextCleaner:
 
         if self.classification.language_type == NATURAL_LANGUAGE:
             document = self.remove_excess_whitespace(self.remove_markup(document))
+            document = self.fix_unicode_mistakes(document)
         if self.classification.language_type == PROGRAMMING_LANGUAGE:
             document = self.convert_spaces_to_tabs(
                 self.remove_multiline_comments(document))
@@ -290,9 +293,16 @@ class TextCleaner:
         text = text.replace("&nbsp;", "").replace("urlLink", "")
         text = text.replace("<h>", "").replace("</h>", "")
         text = text.replace("[Illustration]", "")
+        text = text.replace("b\"b\'", "").replace("b\'b\"", "")
         if all_tags:
             text = self.markup_tags_regex.sub("", text)
         return text
+
+    def fix_unicode_mistakes(self, text):
+        for i in range(3):
+            # fix any escape character build-up
+            text = ftfy.fixes.decode_escapes(text)
+        return textacy.preprocess.fix_bad_unicode(text)
 
     def remove_pos_tags(self, text):
         return re.sub(r"/[^ \t\n\r\f\v]+", "", text)
