@@ -20,6 +20,8 @@ class LSTMLm(t2t_model.T2TModel):
     """Basic LSTM recurrent neural network."""
 
     def model_fn_body(self, features):
+        if self._hparams.initializer == "orthogonal":
+            raise ValueError("LSTM models fail with orthogonal initializer.")
         train = self._hparams.mode == tf.contrib.learn.ModeKeys.TRAIN
         with tf.variable_scope("lstm_lm"):
             # Flatten inputs.
@@ -64,10 +66,30 @@ def lstm_literature_large():
 @registry.register_hparams
 def lstm_base():
     """Set of hyperparameters for our LSTM."""
-    hparams = common_hparams.basic_params1()
+    hparams = attention_lm.attention_lm_base()
+    hparams.batch_size = 1024
+    hparams.hidden_size = 128
+    hparams.num_hidden_layers = 2
+    hparams.clip_grad_norm = 1.0
+    hparams.optimizer = "Adagrad"
+    hparams.learning_rate = 0.2
+    hparams.dropout = 0.1
+    hparams.daisy_chain_variables = False
+    # hparams.initializer = "uniform_unit_scaling"
+    # hparams.initializer_gain = 1.0
+    # hparams.weight_decay = 0.0
+    # hparams.label_smoothing = 0.0
+    # hparams.shared_embedding_and_softmax_weights = int(True)
+    return hparams
+
+
+@registry.register_hparams
+def lstm_tiny():
+    """Set of hyperparameters for our LSTM."""
+    hparams = lstm_base()
     hparams.batch_size = 2048
-    hparams.label_smoothing = 0.0
-    hparams.shared_embedding_and_softmax_weights = int(True)
+    hparams.hidden_size = 384
+    hparams.num_hidden_layers = 1
     return hparams
 
 
@@ -75,7 +97,8 @@ def lstm_base():
 def lstm_small():
     """Set of hyperparameters for our LSTM."""
     hparams = lstm_base()
-    hparams.hidden_size = 256
+    hparams.batch_size = 2048
+    hparams.hidden_size = 512
     hparams.num_hidden_layers = 1
     return hparams
 
@@ -84,8 +107,9 @@ def lstm_small():
 def lstm_medium():
     """Set of hyperparameters for our LSTM."""
     hparams = lstm_base()
+    hparams.batch_size = 6144
     hparams.hidden_size = 1024
-    params.num_hidden_layers = 2
+    hparams.num_hidden_layers = 2
     return hparams
 
 
@@ -93,8 +117,9 @@ def lstm_medium():
 def lstm_large():
     """Set of hyperparameters for our LSTM."""
     hparams = lstm_base()
+    hparams.batch_size = 8192
     hparams.hidden_size = 8192
-    params.num_hidden_layers = 4
+    hparams.num_hidden_layers = 4
     return hparams
 
 
@@ -102,9 +127,9 @@ def lstm_large():
 def attention_lm_tiny():
     """Set of hyperparameters for the attention network."""
     hparams = attention_lm.attention_lm_base()
-    hparams.batch_size = 768
-    hparams.hidden_size = 160
-    hparams.filter_size = 512
+    hparams.batch_size = 2048
+    hparams.hidden_size = 288
+    hparams.filter_size = 1024
     hparams.num_hidden_layers = 1
     # hparams.layer_prepostprocess_dropout = 0.5
     # hparams.shared_embedding_and_softmax_weights = int(True)
@@ -112,12 +137,33 @@ def attention_lm_tiny():
 
 
 @registry.register_hparams
-def attention_lm_small_custom():
+def attention_lm_smaller():
     """Set of hyperparameters for the attention network."""
     hparams = attention_lm.attention_lm_small()
     hparams.batch_size = 2048
     hparams.hidden_size = 288
     hparams.filter_size = 1024
-    hparams.num_hidden_layers = 4
+    # hparams.shared_embedding_and_softmax_weights = int(True)
+    return hparams
+
+
+@registry.register_hparams
+def attention_lm_smallish():
+    """Set of hyperparameters for the attention network."""
+    hparams = attention_lm.attention_lm_small()
+    hparams.batch_size = 4096
+    # hparams.shared_embedding_and_softmax_weights = int(True)
+    return hparams
+
+
+@registry.register_hparams
+def attention_lm_large():
+    """Set of hyperparameters for the attention network."""
+    hparams = attention_lm.attention_lm_base()
+    hparams.filter_size = 3072
+    hparams.batch_size = 6144
+    hparams.hidden_size = 768
+    hparams.num_hidden_layers = 5
+    # hparams.layer_prepostprocess_dropout = 0.5
     # hparams.shared_embedding_and_softmax_weights = int(True)
     return hparams
