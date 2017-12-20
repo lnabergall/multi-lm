@@ -57,7 +57,7 @@ class CustomTarFile(tarfile.TarFile):
     """
     def read_file(self, file_name):
         text_file = self.extractfile(file_name)
-        return str(text_file.read())
+        return text_file.read().decode()
 
     def read_files(self):
         texts = []
@@ -65,7 +65,7 @@ class CustomTarFile(tarfile.TarFile):
         for file_name in self.getnames():
             text_file = self.extractfile(file_name)
             file_names.append(file_name)
-            texts.append(str(text_file.read()))
+            texts.append(text_file.read().decode())
 
         return texts, file_names
 
@@ -73,7 +73,7 @@ class CustomTarFile(tarfile.TarFile):
         file_names = [file_name] if file_name else self.get_names()
         for file_name in file_names:
             text_file = self.extractfile(file_name)
-            for line in str(text_file.read()).splitlines():
+            for line in text_file.read().decode().splitlines():
                 yield line
 
     def add_text_file(self, string, file_name):
@@ -115,7 +115,7 @@ def store_tarfile_data(data_dictionary, file_path, overwrite=False):
 
 def open_zipfile(file_path):
     with ZipFile(file_path, "r") as zip_file:
-        return [str(zip_file.read(file_name)) 
+        return [zip_file.read(file_name).decode() 
                 for file_name in zip_file.namelist()]
 
 
@@ -126,7 +126,7 @@ def get_filenames(zip_file_path):
 
 def open_text_from_zipfile(file_path, file_name):
     with LeanZipFile(file_path) as zip_file:
-        return str(zip_file.read(file_name))
+        return zip_file.read(file_name).decode()
 
 
 def store_zipfile_data(data_dictionary, file_path, overwrite=False):
@@ -139,13 +139,7 @@ def store_zipfile_data(data_dictionary, file_path, overwrite=False):
             if not isinstance(value, str):
                 raise ValueError("Expected a string!")
             else:
-                try:
-                    zip_file.writestr(key, value)
-                except:
-                    print(key)
-                    print(len(key), len(value))
-                    print(type(key), type(value))
-                    raise
+                zip_file.writestr(key, value)
 
 
 def is_excessively_large(file_path):

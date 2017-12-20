@@ -2,6 +2,7 @@
 
 import os
 import random
+import codecs
 from time import time
 from zipfile import ZipFile
 from itertools import chain, groupby
@@ -9,9 +10,11 @@ from collections import Counter
 from multiprocessing import Pool
 from multiprocessing.dummy import Pool as ThreadPool
 
-import spacy
-import textacy
 import numpy as np
+from spacy.lang.en import English
+from spacy.lang.fr import French
+from spacy.lang.de import German
+from spacy.lang.zh import Chinese
 from pygments import lex
 from pygments.lexers.python import PythonLexer
 from pygments.lexers.c_cpp import CLexer
@@ -24,20 +27,17 @@ from tensor2tensor.data_generators.text_encoder import (
 from tensor2tensor.data_generators import problem
 from tensor2tensor.utils import registry
 from cached_property import cached_property
+from bs4 import UnicodeDammit
 
 from . import utilities as utils
 from . import data_preparation as data
 
 
-with ThreadPool(4) as pool:
-    ENGLISH_PROCESSOR, FRENCH_PROCESSOR, GERMAN_PROCESSOR, CHINESE_PROCESSOR = (
-        tuple(pool.map(spacy.load, ["en", "fr", "de", "zh"])))
-
 NATURAL_LANGUAGE_PROCESSORS = {
-    data.ENGLISH: ENGLISH_PROCESSOR,
-    data.FRENCH: FRENCH_PROCESSOR,
-    data.GERMAN: GERMAN_PROCESSOR,
-    data.CHINESE: CHINESE_PROCESSOR,
+    data.ENGLISH: English(),
+    data.FRENCH: French(),
+    data.GERMAN: German(),
+    data.CHINESE: Chinese(),
 }
 
 
@@ -320,8 +320,8 @@ class DatasetConfiguration:
                     continue
                 token = "\n" if not token else token
                 self.vocabulary[token] = int(count) if count.strip() else None
-        if self.vocab_type == "subtoken" and len(self.vocabulary) > 1000000:
-            self.vocabulary = Counter(dict(self.vocabulary.most_common(1000000)))
+        if self.vocab_type == "subtoken" and len(self.vocabulary) > 2000000:
+            self.vocabulary = Counter(dict(self.vocabulary.most_common(2000000)))
 
     def create_text_encoder(self):
         load_vocab = self.vocabulary is None and self.truncated_vocabulary is None
@@ -338,12 +338,13 @@ class DatasetConfiguration:
                 None, vocab_list=list(self.truncated_vocabulary.keys()), 
                 replace_oov=UNKNOWN_TOKEN)
         elif self.vocab_type == "subtoken":
-            if load_vocab and self.vocab_type in self.vocab_file_path:
+            if (load_vocab and self.vocab_type in self.vocab_file_path 
+                    and "complete" not in self.vocab_file_path):
                 encoder = CustomSubwordTextEncoder(self.vocab_file_path)
             else:
                 if self.vocab_size is not None:
                     encoder = CustomSubwordTextEncoder.build_to_target_size(
-                        self.vocab_size, self.vocabulary, 3, 50000)
+                        self.vocab_size, self.vocabulary, 3, 200000)
                 else:
                     encoder = CustomSubwordTextEncoder()
                     encoder.build_from_token_counts(
@@ -357,9 +358,11 @@ class DatasetConfiguration:
         self.encoder = encoder
 
     def encode_classification(self, classification):
-        classification_tokens = chain.from_iterable(
-            [self.tag_token, domain, self.tag_token] 
-            for domain in classification)
+        classification_tokens = list(chain.from_iterable(
+            [domain, self.tag_token] 
+            for domain in classification))
+        # extra token to signal start of document
+        classification_tokens += [self.tag_token]
         return self.encoder.encode(classification_tokens)
 
 
@@ -904,6 +907,14 @@ class Document:
         return filtered_documents
 
     @classmethod
+    def bulk_filter_notokens(cls, documents, file_path=None):
+        if file_path is None:
+            _, file_path = documents[0].get_token_file_info()
+        token_file_names = set(utils.get_filenames(file_path))
+        return [document for document in documents 
+                if document.get_token_file_info()[0] not in token_file_names]
+
+    @classmethod
     def bulk_load(cls, data_type, documents, file_path=None, 
                   page_count=None, page=None):
         if file_path is None:
@@ -918,7 +929,7 @@ class Document:
                 if page_count:
                     file_names = file_names[(page-1)*len(file_names)//page_count
                                             :page*len(file_names)//page_count]
-                document_data = [str(zip_file.read(file_name)) 
+                document_data = [zip_file.read(file_name).decode() 
                                  for file_name in file_names]
             elif data_type == "token":
                 file_names = [document.get_token_file_info()[0] 
@@ -929,7 +940,8 @@ class Document:
                 document_data = []
                 for file_name in file_names:
                     try:
-                        tokens = str(zip_file.read(file_name)).split(TOKEN_SEPARATOR)
+                        tokens = zip_file.read(file_name).decode().split(
+                            TOKEN_SEPARATOR)
                     except:
                         document_data.append(None)
                     else:
@@ -947,35 +959,39 @@ class Document:
             if (os.path.exists(document_list[0].get_token_file_info()[1]) 
                     and not retokenize):
                 continue  # Skip if token zip file found
+            random.shuffle(document_list)
             print("\nTokenizing:", file_path)
-            for i in range(90):
-                print(str(i+1) + "/90...")
+            for i in range(50):
+                print(str(i+1) + "/50...")
+                print(time())
                 document_texts = cls.bulk_load(
-                    "text", document_list, page_count=90, page=i+1)
-                # To deal with spacy string size limit (2**30)
-                concat_text = (" " + DOCUMENT_SEPARATOR + " ").join(document_texts)
-                # Extra text cleaning to deal with unicode mistakes, etc.
-                concat_text = text_cleaner.remove_markup(concat_text)
-                try:
-                    concat_text = text_cleaner.fix_unicode_mistakes(concat_text)
-                except UnicodeDecodeError:
-                    try:
-                        concat_text = textacy.preprocess.fix_bad_unicode(concat_text)
-                    except UnicodeDecodeError:
-                        pass
-                # Assumes all documents in zip file are same language
-                tokens = tokenize(concat_text, 
-                                  document_list[0].classification.language, file_path)
-                document_tokens = [
-                    list(token_sequence) for seperator, token_sequence 
-                    in groupby(tokens, lambda element: element == DOCUMENT_SEPARATOR)
-                    if not seperator]
+                    "text", document_list, page_count=50, page=i+1)
+                document_tokens = []
+                for j, text in enumerate(document_texts):
+                    # log document name to catch error-producing document
+                    document = document_list[(i*len(document_list)//50)+j]
+                    utils.store_text(document.file_name + "\n", 
+                                     data.BASE_DIR + "\\tokenize_log.txt",
+                                     append=True)
+                    if j % 500 == 0:
+                        print("Tokenizing document", 
+                              str(j) + "/" + str(len(document_texts)))
+                    if text is None:
+                        document_tokens.append(["None"])
+                    else:
+                        document_tokens.append(tokenize(
+                            text, document_list[0].classification.language, 
+                            file_path))
                 if not document_tokens:
                     continue
+                if ["None"] in document_tokens:
+                    print("At least one document couldn't be processed!")
                 token_data_dictionary = {}
                 for j, tokens in enumerate(document_tokens):
+                    if document_texts[j] is None:
+                        continue
                     token_text = TOKEN_SEPARATOR.join(tokens)
-                    document = document_list[(i*len(document_list)//90)+j]
+                    document = document_list[(i*len(document_list)//50)+j]
                     token_file_name, token_file_path = document.get_token_file_info()
                     token_data_dictionary[token_file_name] = token_text
                 utils.store_zipfile_data(token_data_dictionary, token_file_path)
@@ -1262,13 +1278,9 @@ class MultiLm1BillionSmall(MultiLmProblem):
                               classification=BILLION_BENCHMARK, 
                               already_partitioned=True)
 
-    @property 
-    def use_subword_tokenizer(self):
-        return True
-
 
 @registry.register_problem("multi_lm_1billion_nocats_subword_small")
-class MultiLm1BillionSmall(MultiLmProblem):
+class MultiLm1BillionSmallNoCats(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs) 
@@ -1288,20 +1300,16 @@ class MultiLm1BillionSmall(MultiLmProblem):
                               classification=BILLION_BENCHMARK, 
                               use_categories=False, already_partitioned=True)
 
-    @property 
-    def use_subword_tokenizer(self):
-        return True
-
 
 @registry.register_problem("multi_lm_1billion_subword_medium")
-class MultiLm1BillionSmall(MultiLmProblem):
+class MultiLm1BillionMedium(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs) 
         try:
             self.load_dataset("1billion_subtoken16384_size100000000_config.txt",
                               classification=BILLION_BENCHMARK, 
-                              already_partitioned=True, training=False)
+                              already_partitioned=True, training=True)
         except:
             setup_dataset("1billion", 
                           [("news", 0, "split_as_one", data.ENGLISH)],
@@ -1313,13 +1321,9 @@ class MultiLm1BillionSmall(MultiLmProblem):
                               classification=BILLION_BENCHMARK,
                               already_partitioned=True)
 
-    @property 
-    def use_subword_tokenizer(self):
-        return True
-
 
 @registry.register_problem("multi_lm_1billion_subword_large")
-class MultiLm1BillionSmall(MultiLmProblem):
+class MultiLm1BillionLarge(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs) 
@@ -1338,25 +1342,21 @@ class MultiLm1BillionSmall(MultiLmProblem):
                               classification=BILLION_BENCHMARK,
                               already_partitioned=True)
 
-    @property 
-    def use_subword_tokenizer(self):
-        return True
-
 
 @registry.register_problem("multi_lm_enwiki_token_small")
-class MultiLmEnglishWikiToken(MultiLmProblem):
+class MultiLmEnWikiTokenSmall(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         try:
-            self.load_dataset("englishwiki_token100000_size30000000_config.txt")
+            self.load_dataset("enwiki_token100000_size30000000_config.txt")
         except FileNotFoundError:
-            setup_dataset("englishwiki", 
+            setup_dataset("enwiki", 
                           [("wikipedia", 0, "split_as_one", data.ENGLISH)],
                           vocab_size=100000, vocab_type="token", 
                           total_token_count=30000000, min_doc_length=20, 
                           max_doc_length=200)
-            self.load_dataset("englishwiki_token100000_size30000000_config.txt")
+            self.load_dataset("enwiki_token100000_size30000000_config.txt")
 
     @property 
     def use_subword_tokenizer(self):
@@ -1364,55 +1364,65 @@ class MultiLmEnglishWikiToken(MultiLmProblem):
 
 
 @registry.register_problem("multi_lm_enwiki_subword_small")
-class MultiLmEnglishWikiSubword(MultiLmProblem):
+class MultiLmEnWikiSubwordSmall(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         try:
-            self.load_dataset("englishwiki_subtoken8000_size30000000_config.txt", 
+            self.load_dataset("enwiki_subtoken8192_size30000000_config.txt", 
                               training=True)
         except FileNotFoundError:
-            setup_dataset("englishwiki", 
+            setup_dataset("enwiki", 
                           [("wikipedia", 0, "split_as_one", data.ENGLISH)],
-                          vocab_size=8000, vocab_type="subtoken", 
+                          vocab_size=2**13, vocab_type="subtoken", 
                           total_token_count=30000000, min_doc_length=20,
                           max_doc_length=150)
-            self.load_dataset("englishwiki_subtoken8000_size30000000_config.txt")
+            self.load_dataset("enwiki_subtoken8192_size30000000_config.txt")
 
-    @property 
-    def use_subword_tokenizer(self):
-        return True
+
+@registry.register_problem("multi_lm_enwiki_nocats_subword_small")
+class MultiLmEnWikiSubwordSmallNoCats(MultiLmProblem):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.load_dataset("enwiki_nocats_subtoken8192_size30000000_config.txt", 
+                              training=False, use_categories=False)
+        except FileNotFoundError:
+            setup_dataset("enwiki_nocats", 
+                          [("wikipedia", 0, "split_as_one", data.ENGLISH)],
+                          vocab_size=2**13, vocab_type="subtoken", 
+                          total_token_count=30000000, min_doc_length=20,
+                          max_doc_length=150)
+            self.load_dataset("enwiki_nocats_subtoken8192_size30000000_config.txt", 
+                              use_categories=False)
 
 
 @registry.register_problem("multi_lm_enwiki_subword_medium")
-class MultiLmEnglishWikiSubword(MultiLmProblem):
+class MultiLmEnWikiSubwordMedium(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         try:
-            self.load_dataset("englishwiki_subtoken15000_size100000000_config.txt",
-                              training=False)
+            self.load_dataset("enwiki_subtoken16384_size100000000_config.txt",
+                              training=True)
         except FileNotFoundError:
-            setup_dataset("englishwiki", 
+            setup_dataset("enwiki", 
                           [("wikipedia", 0, "split_as_one", data.ENGLISH)],
-                          vocab_size=15000, vocab_type="subtoken", 
+                          vocab_size=2**14, vocab_type="subtoken", 
                           total_token_count=100000000, min_doc_length=20,
                           max_doc_length=150)
-            self.load_dataset("englishwiki_subtoken15000_size100000000_config.txt")
-
-    @property 
-    def use_subword_tokenizer(self):
-        return True
+            self.load_dataset("enwiki_subtoken16384_size100000000_config.txt")
 
 
 @registry.register_problem("multi_lm_enfrwiki_subword_small")
-class MultiLmEnFrWikiSubword(MultiLmProblem):
+class MultiLmEnFrWikiSubwordSmall(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         try:
             self.load_dataset("enfrwiki_subtoken10000_size50000000_config.txt", 
-                              training=False)
+                              training=True)
         except FileNotFoundError:
             setup_dataset("enfrwiki", 
                           [("wikipedia", 0, "split_as_one", (data.ENGLISH, data.FRENCH))],
@@ -1421,13 +1431,27 @@ class MultiLmEnFrWikiSubword(MultiLmProblem):
                           max_doc_length=150)
             self.load_dataset("enfrwiki_subtoken10000_size50000000_config.txt")
 
-    @property 
-    def use_subword_tokenizer(self):
-        return True
+
+@registry.register_problem("multi_lm_enfrwiki_nocats_subword_small")
+class MultiLmEnFrWikiSubwordNoCats(MultiLmProblem):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.load_dataset("enfrwiki_nocats_subtoken10000_size50000000_config.txt", 
+                              training=True, use_categories=False)
+        except FileNotFoundError:
+            setup_dataset("enfrwiki_nocats", 
+                          [("wikipedia", 0, "split_as_one", (data.ENGLISH, data.FRENCH))],
+                          vocab_size=10000, vocab_type="subtoken", 
+                          total_token_count=50000000, min_doc_length=20,
+                          max_doc_length=150)
+            self.load_dataset("enfrwiki_nocats_subtoken10000_size50000000_config.txt",
+                              use_categories=False)
 
 
 @registry.register_problem("multi_lm_enfrwiki_subword_medium")
-class MultiLmEnFrWikiSubword(MultiLmProblem):
+class MultiLmEnFrWikiSubwordMedium(MultiLmProblem):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1442,6 +1466,20 @@ class MultiLmEnFrWikiSubword(MultiLmProblem):
                           max_doc_length=150)
             self.load_dataset("enfrwiki_subtoken16384_size100000000_config.txt")
 
-    @property 
-    def use_subword_tokenizer(self):
-        return True
+
+@registry.register_problem("multi_lm_enfrwiki_nocats_subword_medium")
+class MultiLmEnFrWikiSubwordMediumNoCats(MultiLmProblem):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.load_dataset("enfrwiki_nocats_subtoken16384_size100000000_config.txt", 
+                              training=False, use_categories=False)
+        except FileNotFoundError:
+            setup_dataset("enfrwiki_nocats", 
+                          [("wikipedia", 0, "split_as_one", (data.ENGLISH, data.FRENCH))],
+                          vocab_size=2**14, vocab_type="subtoken", 
+                          total_token_count=100000000, min_doc_length=20,
+                          max_doc_length=150)
+            self.load_dataset("enfrwiki_nocats_subtoken16384_size100000000_config.txt", 
+                              use_categories=False)

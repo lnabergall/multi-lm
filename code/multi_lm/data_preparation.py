@@ -293,15 +293,15 @@ class TextCleaner:
         text = text.replace("&nbsp;", "").replace("urlLink", "")
         text = text.replace("<h>", "").replace("</h>", "")
         text = text.replace("[Illustration]", "")
-        text = text.replace("b\"b\'", "").replace("b\'b\"", "")
         if all_tags:
             text = self.markup_tags_regex.sub("", text)
         return text
 
-    def fix_unicode_mistakes(self, text):
-        for i in range(3):
-            # fix any escape character build-up
-            text = ftfy.fixes.decode_escapes(text)
+    def fix_unicode_mistakes(self, text, decode_escapes=False):
+        if decode_escapes:
+            for i in range(3):
+                # fix any escape character build-up
+                text = ftfy.fixes.decode_escapes(text)
         return textacy.preprocess.fix_bad_unicode(text)
 
     def remove_pos_tags(self, text):
