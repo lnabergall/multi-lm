@@ -22,7 +22,7 @@ class LSTMLm(t2t_model.T2TModel):
     def model_fn_body(self, features):
         if self._hparams.initializer == "orthogonal":
             raise ValueError("LSTM models fail with orthogonal initializer.")
-        train = self._hparams.mode == tf.contrib.learn.ModeKeys.TRAIN
+        train = self._hparams.mode == tf.estimator.ModeKeys.TRAIN
         with tf.variable_scope("lstm_lm"):
             # Flatten inputs.
             inputs = common_layers.flatten4d3d(features.get("targets"))
@@ -64,7 +64,7 @@ def lstm_literature_large():
 
 
 @registry.register_hparams
-def lstm_base():
+def lstm_base_literature():
     """Set of hyperparameters for our LSTM."""
     hparams = attention_lm.attention_lm_base()
     hparams.batch_size = 1024
@@ -79,6 +79,25 @@ def lstm_base():
     # hparams.initializer_gain = 1.0
     # hparams.weight_decay = 0.0
     # hparams.label_smoothing = 0.0
+    # hparams.shared_embedding_and_softmax_weights = int(True)
+    return hparams
+
+
+@registry.register_hparams
+def lstm_base():
+    """Set of hyperparameters for our LSTM."""
+    hparams = common_hparams.basic_params1()
+    hparams.batch_size = 1024
+    hparams.hidden_size = 128
+    hparams.num_hidden_layers = 2
+    hparams.clip_grad_norm = 5.0
+    hparams.learning_rate = 0.1
+    hparams.dropout = 0.0
+    hparams.daisy_chain_variables = False
+    hparams.initializer = "uniform_unit_scaling"
+    hparams.initializer_gain = 1.0
+    hparams.weight_decay = 0.0
+    hparams.label_smoothing = 0.0
     # hparams.shared_embedding_and_softmax_weights = int(True)
     return hparams
 

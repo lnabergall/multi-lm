@@ -25,6 +25,7 @@ from tensor2tensor.data_generators.text_encoder import (
     EOS_ID, RESERVED_TOKENS, TextEncoder, 
     TokenTextEncoder, SubwordTextEncoder)
 from tensor2tensor.data_generators import problem
+from tensor2tensor.data_generators.lm1b import LanguagemodelLm1b32k
 from tensor2tensor.utils import registry
 from cached_property import cached_property
 from bs4 import UnicodeDammit
@@ -1258,6 +1259,14 @@ BILLION_BENCHMARK = data.TextClassification(
         data.ENGLISH, "1-billion-word-language-modeling-benchmark"))
 
 
+@registry.register_problem("languagemodel_lm1b8k")
+class LanguagemodelLm1b8k(LanguagemodelLm1b32k):
+
+    @property
+    def targeted_vocab_size(self):
+        return 2**13  # 8192
+
+
 @registry.register_problem("multi_lm_1billion_subword_small")
 class MultiLm1BillionSmall(MultiLmProblem):
 
@@ -1288,7 +1297,7 @@ class MultiLm1BillionSmallNoCats(MultiLmProblem):
             self.load_dataset("1billion_nocats_subtoken8192_size30000000_config.txt",
                               classification=BILLION_BENCHMARK, 
                               already_partitioned=True, use_categories=False,
-                              training=True)
+                              training=False)
         except:
             setup_dataset("1billion_nocats", 
                           [("news", 0, "split_as_one", data.ENGLISH)],
@@ -1457,7 +1466,7 @@ class MultiLmEnFrWikiSubwordMedium(MultiLmProblem):
         super().__init__(*args, **kwargs)
         try:
             self.load_dataset("enfrwiki_subtoken16384_size100000000_config.txt", 
-                              training=False)
+                              training=True)
         except FileNotFoundError:
             setup_dataset("enfrwiki", 
                           [("wikipedia", 0, "split_as_one", (data.ENGLISH, data.FRENCH))],
