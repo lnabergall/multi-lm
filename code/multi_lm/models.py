@@ -24,10 +24,10 @@ class LSTMLm(t2t_model.T2TModel):
             raise ValueError("LSTM models fail with orthogonal initializer.")
         train = self._hparams.mode == tf.estimator.ModeKeys.TRAIN
         with tf.variable_scope("lstm_lm"):
-            # Flatten inputs.
-            inputs = common_layers.flatten4d3d(features.get("targets"))
-            outputs, _ = lstm.lstm(tf.reverse(inputs, axis=[1]), 
-                                   self._hparams, train, "lstm")
+            # Flatten and shift inputs.
+            shifted_targets = common_layers.shift_right(features.get("targets"))
+            inputs = common_layers.flatten4d3d(shifted_targets)
+            outputs, _ = lstm.lstm(inputs, self._hparams, train, "lstm")
             return tf.expand_dims(outputs, axis=2)
 
 
@@ -75,10 +75,10 @@ def lstm_base_literature():
     hparams.learning_rate = 0.2
     hparams.dropout = 0.1
     hparams.daisy_chain_variables = False
-    # hparams.initializer = "uniform_unit_scaling"
-    # hparams.initializer_gain = 1.0
-    # hparams.weight_decay = 0.0
-    # hparams.label_smoothing = 0.0
+    hparams.initializer = "uniform_unit_scaling"
+    hparams.initializer_gain = 1.0
+    hparams.weight_decay = 0.0
+    hparams.label_smoothing = 0.0
     # hparams.shared_embedding_and_softmax_weights = int(True)
     return hparams
 
@@ -134,6 +134,16 @@ def lstm_medium():
 
 @registry.register_hparams
 def lstm_large():
+    """Set of hyperparameters for our LSTM."""
+    hparams = lstm_base()
+    hparams.batch_size = 8192
+    hparams.hidden_size = 2048
+    hparams.num_hidden_layers = 2
+    return hparams
+
+
+@registry.register_hparams
+def lstm_largest():
     """Set of hyperparameters for our LSTM."""
     hparams = lstm_base()
     hparams.batch_size = 8192
