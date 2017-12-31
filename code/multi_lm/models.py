@@ -19,6 +19,9 @@ from tensor2tensor.utils import registry, t2t_model
 class LSTMLm(t2t_model.T2TModel):
     """Basic LSTM recurrent neural network."""
 
+    def has_input(self):
+        return False  # self._problem_hparams.input_modality
+
     def model_fn_body(self, features):
         if self._hparams.initializer == "orthogonal":
             raise ValueError("LSTM models fail with orthogonal initializer.")

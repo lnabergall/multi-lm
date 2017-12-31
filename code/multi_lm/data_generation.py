@@ -1492,3 +1492,58 @@ class MultiLmEnFrWikiSubwordMediumNoCats(MultiLmProblem):
                           max_doc_length=150)
             self.load_dataset("enfrwiki_nocats_subtoken16384_size100000000_config.txt", 
                               use_categories=False)
+
+
+@registry.register_problem("multi_lm_wiki_subword_small")
+class MultiLmWikiSubwordSmall(MultiLmProblem):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.load_dataset("wiki_subtoken16384_size50000000_config.txt", 
+                              training=True)
+        except FileNotFoundError:
+            setup_dataset("wiki", 
+                          [("wikipedia", 0, "split_as_one", 
+                            (data.ENGLISH, data.FRENCH, data.GERMAN, data.CHINESE))],
+                          vocab_size=2**14, vocab_type="subtoken", 
+                          total_token_count=50000000, min_doc_length=20,
+                          max_doc_length=150)
+            self.load_dataset("wiki_subtoken16384_size50000000_config.txt")
+
+
+@registry.register_problem("multi_lm_wiki_nocats_subword_small")
+class MultiLmWikiSubwordSmall(MultiLmProblem):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.load_dataset("wiki_subtoken16384_size50000000_config.txt", 
+                              training=False, use_categories=False)
+        except FileNotFoundError:
+            setup_dataset("wiki", 
+                          [("wikipedia", 0, "split_as_one", 
+                            (data.ENGLISH, data.FRENCH, data.GERMAN, data.CHINESE))],
+                          vocab_size=2**14, vocab_type="subtoken", 
+                          total_token_count=50000000, min_doc_length=20,
+                          max_doc_length=150)
+            self.load_dataset("wiki_subtoken16384_size50000000_config.txt",
+                              use_categories=False)
+
+
+@registry.register_problem("multi_lm_wiki_subword_medium")
+class MultiLmEnFrWikiSubwordSmall(MultiLmProblem):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.load_dataset("wiki_subtoken24576_size200000000_config.txt", 
+                              training=False)
+        except FileNotFoundError:
+            setup_dataset("wiki", 
+                          [("wikipedia", 0, "split_as_one", 
+                            (data.ENGLISH, data.FRENCH, data.GERMAN, data.CHINESE))],
+                          vocab_size=24576, vocab_type="subtoken", 
+                          total_token_count=200000000, min_doc_length=20,
+                          max_doc_length=150)
+            self.load_dataset("wiki_subtoken24576_size200000000_config.txt")
