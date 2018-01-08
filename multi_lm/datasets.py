@@ -7,7 +7,7 @@ from tensor2tensor.data_generators import problem
 from tensor2tensor.data_generators.lm1b import LanguagemodelLm1b32k
 
 from . import data_preparation as data
-from .data_generation import load_dataset, setup_dataset, 
+from .data_generation import load_dataset, setup_dataset
 
 
 class MultiLmProblem(problem.Text2TextProblem):
